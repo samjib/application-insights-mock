@@ -1,0 +1,34 @@
+services:
+  mock-appinsights:
+    build: ..
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_DROP_METRICS_DEFAULT: "true"
+
+  backend:
+    build: ./Api.Backend
+    ports:
+      - "5200:8080"
+    environment:
+      ApplicationInsights__ConnectionString: "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=http://mock-appinsights:3000"
+    depends_on:
+      - mock-appinsights
+
+  gateway:
+    build: ./Api.Gateway
+    ports:
+      - "5100:8080"
+    environment:
+      ApplicationInsights__ConnectionString: "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=http://mock-appinsights:3000"
+      BackendUrl: "http://backend:8080"
+    depends_on:
+      - mock-appinsights
+      - backend
+
+  testweb:
+    build: ./TestWeb
+    ports:
+      - "3001:3001"
+    depends_on:
+      - mock-appinsights
