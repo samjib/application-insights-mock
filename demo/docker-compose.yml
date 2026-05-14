@@ -4,7 +4,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_DROP_METRICS_DEFAULT: "true"
+      DROP_METRICS_DEFAULT: "true"
 
   backend:
     build: ./Api.Backend

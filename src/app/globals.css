@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Force dark mode regardless of OS preference — this is a dev tool, dark-only by design. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -7,4 +10,15 @@
 
 html {
   color-scheme: dark;
+}
+
+/* Subtle styling for keyboard shortcut hints */
+kbd {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid rgb(75 85 99 / 0.5);
+  background: rgb(31 41 55 / 0.5);
+  color: rgb(209 213 219);
 }

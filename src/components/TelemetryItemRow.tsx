@@ -15,6 +15,19 @@ const TYPE_BADGE_COLORS: Record<string, string> = {
   Unknown: 'bg-gray-100 text-gray-800 dark:bg-gray-900/50 dark:text-gray-300',
 };
 
+const TYPE_BADGE_LABELS: Record<string, string> = {
+  Request: 'REQ',
+  Dependency: 'DEP',
+  Trace: 'TRC',
+  Exception: 'EXC',
+  Event: 'EVT',
+  Metric: 'MET',
+  Availability: 'AVL',
+  PageView: 'PV',
+  PageViewPerf: 'PVP',
+  Unknown: '?',
+};
+
 const SEVERITY_COLORS: Record<number, string> = {
   0: 'text-gray-400',    // Verbose
   1: 'text-blue-500',    // Information
@@ -83,6 +96,7 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
 
   return (
     <div
+      id={`telemetry-row-${item.id}`}
       onClick={() => onClick(item)}
       className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-gray-800 transition-colors text-sm ${
         isSelected
@@ -90,21 +104,19 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
           : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-l-2 border-l-transparent'
       } ${success === false ? 'bg-red-50/30 dark:bg-red-950/20' : ''}`}
     >
-      {/* Timestamp */}
       <span className="text-xs text-gray-400 dark:text-gray-500 font-mono tabular-nums shrink-0 w-40">
         {formatTime(item.timestamp)}
       </span>
 
-      {/* Type badge */}
       <span
-        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 w-16.25 text-center ${
+        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 w-12 text-center ${
           TYPE_BADGE_COLORS[item.type] || TYPE_BADGE_COLORS.Unknown
         }`}
+        title={item.type}
       >
-        {item.type === 'Dependency' ? 'DEP' : item.type === 'Availability' ? 'AVAIL' : item.type === 'PageView' ? 'PAGE' : item.type === 'PageViewPerf' ? 'PPERF' : item.type.toUpperCase().slice(0, 5)}
+        {TYPE_BADGE_LABELS[item.type] || '?'}
       </span>
 
-      {/* Severity indicator */}
       {severity !== undefined && (
         <span className={`text-[10px] font-mono shrink-0 w-7 ${SEVERITY_COLORS[severity] || ''}`}>
           {SEVERITY_LABELS[severity] || ''}
@@ -112,7 +124,6 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
       )}
       {severity === undefined && <span className="w-7 shrink-0" />}
 
-      {/* Success indicator */}
       {success !== undefined && (
         <span className={`text-xs shrink-0 ${success ? 'text-emerald-500' : 'text-red-500'}`}>
           {success ? '✓' : '✗'}
@@ -120,10 +131,8 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
       )}
       {success === undefined && <span className="w-3.5 shrink-0" />}
 
-      {/* Summary */}
       <span className="truncate text-gray-700 dark:text-gray-300 flex-1">{item.summary}</span>
 
-      {/* Dynamic extra columns */}
       {extraColumns.map((col) => {
         const val = extractColumnValue(item, col);
         return (
@@ -137,7 +146,6 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
         );
       })}
 
-      {/* Operation name from tags */}
       {item.envelope.tags?.['ai.operation.name'] && (
         <span className="text-xs text-gray-400 dark:text-gray-500 truncate max-w-50 shrink-0">
           {item.envelope.tags['ai.operation.name']}

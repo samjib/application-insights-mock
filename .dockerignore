@@ -1,4 +1,13 @@
 node_modules
 .next
 .git
+.gitignore
 demo
+.readme
+README.md
+LICENSE
+*.tsbuildinfo
+*.log
+.vscode
+.idea
+.DS_Store

@@ -60,3 +60,15 @@ In `appsettings.Development.json`:
   }
 }
 ```
+
+## Configuration
+
+Environment variables:
+
+Variable | Default | Description
+:- | :- | :-
+`MAX_ITEMS` | `10000` | Telemetry items retained in the in-memory ring buffer. Clamped to `[100, 1_000_000]`.
+`MAX_BODY_BYTES` | `10485760` | Maximum request body size (bytes) accepted by `/v2/track`. Larger payloads are rejected with HTTP 413.
+`DROP_METRICS_DEFAULT` | `true` | Discard `Metric` telemetry on ingest. Set to `false` to capture. Toggle at runtime from the Settings menu.
+`PORT` | `3000` | HTTP port.
+`HOSTNAME` | `0.0.0.0` | Bind address.

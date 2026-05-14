@@ -1,5 +1,4 @@
-import { telemetryStore } from '@/lib/telemetry-store';
-import { TelemetryItem } from '@/lib/types';
+import { telemetryStore, Batch } from '@/lib/telemetry-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,43 +6,40 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const encoder = new TextEncoder();
 
-  let onItem: ((item: TelemetryItem) => void) | undefined;
+  let onBatch: ((batch: Batch) => void) | undefined;
   let onClear: (() => void) | undefined;
   let keepalive: ReturnType<typeof setInterval> | undefined;
+  let closed = false;
 
   const stream = new ReadableStream({
     start(controller) {
-      onItem = (item: TelemetryItem) => {
+      const send = (chunk: string) => {
+        if (closed) return;
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(item)}\n\n`));
+          controller.enqueue(encoder.encode(chunk));
         } catch {
-          // Stream closed
+          closed = true;
         }
+      };
+
+      onBatch = (batch) => {
+        send(`data: ${JSON.stringify(batch)}\n\n`);
       };
 
       onClear = () => {
-        try {
-          controller.enqueue(encoder.encode(`event: clear\ndata: {}\n\n`));
-        } catch {
-          // Stream closed
-        }
+        send(`event: clear\ndata: {}\n\n`);
       };
 
-      telemetryStore.emitter.on('item', onItem);
+      telemetryStore.emitter.on('batch', onBatch);
       telemetryStore.emitter.on('clear', onClear);
 
-      controller.enqueue(encoder.encode(`: connected\n\n`));
+      send(`: connected\n\n`);
 
-      keepalive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(`: keepalive\n\n`));
-        } catch {
-          clearInterval(keepalive);
-        }
-      }, 15_000);
+      keepalive = setInterval(() => send(`: keepalive\n\n`), 15_000);
     },
     cancel() {
-      if (onItem) telemetryStore.emitter.off('item', onItem);
+      closed = true;
+      if (onBatch) telemetryStore.emitter.off('batch', onBatch);
       if (onClear) telemetryStore.emitter.off('clear', onClear);
       if (keepalive) clearInterval(keepalive);
     },

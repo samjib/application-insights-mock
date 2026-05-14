@@ -30,8 +30,15 @@ export default function ColumnPicker({ availableColumns, selectedKeys, onToggle 
         setOpen(false);
       }
     }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
     document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
   }, []);
 
   useEffect(() => {
@@ -68,7 +75,6 @@ export default function ColumnPicker({ availableColumns, selectedKeys, onToggle 
 
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg flex flex-col max-h-96">
-          {/* Search */}
           <div className="p-2 border-b border-gray-200 dark:border-gray-700 shrink-0">
             <input
               ref={inputRef}
@@ -80,7 +86,6 @@ export default function ColumnPicker({ availableColumns, selectedKeys, onToggle 
             />
           </div>
 
-          {/* Column list */}
           <div className="overflow-y-auto flex-1">
             {filtered.length === 0 && (
               <div className="p-3 text-xs text-gray-400">
