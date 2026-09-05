@@ -61,6 +61,10 @@ In `appsettings.Development.json`:
 }
 ```
 
+## Contributing
+
+Known issues and planned work are itemised in [docs/IMPROVEMENTS.md](docs/IMPROVEMENTS.md).
+
 ## Configuration
 
 Environment variables:
