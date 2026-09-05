@@ -1,7 +1,7 @@
 'use client';
 
 import { TelemetryType } from '@/lib/types';
-import { INSIGHTS_VIEW_ID, VIEWS } from '@/lib/views';
+import { VIEWS } from '@/lib/views';
 
 interface ViewTabsProps {
   activeId: string;
@@ -26,8 +26,7 @@ export default function ViewTabs({ activeId, onSelect, typeCounts, totalCount }:
     >
       {VIEWS.map((view) => {
         const active = view.id === activeId;
-        const isInsights = view.id === INSIGHTS_VIEW_ID;
-        const count = isInsights ? null : countFor(view.types, typeCounts, totalCount);
+        const count = countFor(view.types, typeCounts, totalCount);
         return (
           <button
             key={view.id}
@@ -41,7 +40,7 @@ export default function ViewTabs({ activeId, onSelect, typeCounts, totalCount }:
             }`}
           >
             <span>{view.label}</span>
-            {count !== null && count > 0 && (
+            {count > 0 && (
               <span
                 className={`text-[10px] tabular-nums rounded-full px-1.5 py-0.5 ${
                   active

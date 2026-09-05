@@ -16,16 +16,7 @@ export interface TelemetryView {
   description: string;
 }
 
-export const INSIGHTS_VIEW_ID = 'insights';
-
 export const VIEWS: TelemetryView[] = [
-  {
-    id: INSIGHTS_VIEW_ID,
-    label: 'Overview',
-    types: null,
-    defaultColumns: [],
-    description: 'Aggregate view of everything captured',
-  },
   {
     id: 'all',
     label: 'Live feed',
@@ -80,6 +71,8 @@ export const DEFAULT_VIEW_ID = 'all';
 const BY_ID = new Map(VIEWS.map((v) => [v.id, v]));
 
 export function getView(id: string | undefined | null): TelemetryView {
+  // 'insights' was a standalone page before the summary moved onto each view;
+  // links and stored state carrying it land on the live feed.
   return (id ? BY_ID.get(id) : undefined) ?? BY_ID.get(DEFAULT_VIEW_ID)!;
 }
 

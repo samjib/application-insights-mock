@@ -19,9 +19,9 @@ import {
   saveViewState,
   syncUrl,
 } from '@/lib/view-state';
-import { INSIGHTS_VIEW_ID, columnsForView, getView } from '@/lib/views';
+import { columnsForView, getView } from '@/lib/views';
 import FilterBar from '@/components/FilterBar';
-import InsightsPanel from '@/components/InsightsPanel';
+import SummaryPanel from '@/components/SummaryPanel';
 import ViewTabs from '@/components/ViewTabs';
 import Splitter from '@/components/Splitter';
 import TelemetryList from '@/components/TelemetryList';
@@ -149,7 +149,6 @@ export default function Home() {
   const splitFraction = view.splitFraction ?? DEFAULT_SPLIT;
 
   const activeView = getView(view.view);
-  const showingInsights = activeView.id === INSIGHTS_VIEW_ID;
   const selectedColumnKeys = useMemo(
     () => columnsForView(activeView, view.columnsByView),
     [activeView, view.columnsByView],
@@ -329,10 +328,14 @@ export default function Home() {
     setSelectedItem(null);
   }, []);
 
-  /** Open a list view scoped to something clicked on the overview. */
-  const handleDrillDown = useCallback((viewId: string, query: string) => {
-    setView((v) => ({ ...v, view: viewId, search: query, operationFilter: null }));
+  /** Scope the list to something clicked in the summary above it. */
+  const handleDrillDown = useCallback((query: string) => {
+    setView((v) => ({ ...v, search: query, operationFilter: null }));
     setSelectedItem(null);
+  }, []);
+
+  const handleToggleSummary = useCallback(() => {
+    setView((v) => ({ ...v, summaryCollapsed: !v.summaryCollapsed }));
   }, []);
 
   const handleFilterByOperation = useCallback((opId: string) => {
@@ -424,14 +427,6 @@ export default function Home() {
     view.categoryFilters.length > 0 ||
     view.operationFilter !== null ||
     view.hiddenTypes.length > 0;
-
-  const scopeLabel = useMemo(() => {
-    const parts: string[] = [];
-    if (view.search.trim()) parts.push(`matches of “${view.search.trim()}”`);
-    if (view.categoryFilters.length) parts.push(`${view.categoryFilters.length} category filter(s)`);
-    if (view.operationFilter) parts.push('one operation');
-    return parts.length ? parts.join(' and ') : null;
-  }, [view.search, view.categoryFilters, view.operationFilter]);
 
   const extraColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
@@ -607,17 +602,17 @@ export default function Home() {
         columnsAreDefault={view.columnsByView[activeView.id] === undefined}
         // The view already scopes the types, so its own filter would only confuse.
         showTypeFilter={activeView.types === null}
-        showColumnPicker={!showingInsights}
-        itemNoun={showingInsights ? 'item' : undefined}
+        showColumnPicker
       />
 
-      {showingInsights ? (
-        <InsightsPanel
-          items={scopedItems}
-          onDrillDown={handleDrillDown}
-          scopeLabel={scopeLabel}
-        />
-      ) : (
+      <SummaryPanel
+        items={filteredItems}
+        view={activeView}
+        collapsed={view.summaryCollapsed}
+        onToggle={handleToggleSummary}
+        onDrillDown={handleDrillDown}
+      />
+
       <div ref={paneRef} className="flex-1 flex min-h-0">
         <div
           className="flex flex-col min-h-0"
@@ -652,7 +647,6 @@ export default function Home() {
           </>
         )}
       </div>
-      )}
     </div>
   );
 }

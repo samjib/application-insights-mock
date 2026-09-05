@@ -24,6 +24,8 @@ export interface ViewState {
   columnsByView: Record<string, string[]>;
   /** Fraction of the width given to the list when the detail pane is open. */
   splitFraction: number | null;
+  /** Hides the per-view summary strip above the list. */
+  summaryCollapsed: boolean;
 }
 
 const STORAGE_KEY = 'mock-ai-view';
@@ -44,6 +46,7 @@ export const EMPTY_VIEW: ViewState = {
   operationFilter: null,
   columnsByView: {},
   splitFraction: null,
+  summaryCollapsed: false,
 };
 
 function stringArray(value: unknown): string[] {
@@ -74,6 +77,7 @@ export function toSearchParams(state: ViewState): URLSearchParams {
   const active = state.columnsByView[state.view];
   if (active) params.set('cols', active.join(','));
   if (state.splitFraction !== null) params.set('split', state.splitFraction.toFixed(3));
+  if (state.summaryCollapsed) params.set('summary', '0');
   return params;
 }
 
@@ -92,6 +96,7 @@ function fromSearchParams(params: URLSearchParams): Partial<ViewState> {
     const n = Number(params.get('split'));
     if (Number.isFinite(n)) out.splitFraction = clampSplit(n);
   }
+  if (params.has('summary')) out.summaryCollapsed = params.get('summary') === '0';
   return out;
 }
 
@@ -141,6 +146,7 @@ function fromStorage(): Partial<ViewState> {
       operationFilter: typeof v.operationFilter === 'string' ? v.operationFilter : null,
       columnsByView,
       splitFraction: typeof v.splitFraction === 'number' ? clampSplit(v.splitFraction) : null,
+      summaryCollapsed: v.summaryCollapsed === true,
     };
   } catch {
     return {};

@@ -12,6 +12,8 @@ export interface HistogramBin {
 
 interface HistogramProps {
   bins: HistogramBin[];
+  /** Names what is plotted, for assistive tech. */
+  label: string;
   height?: number;
   emptyMessage: string;
   onSelect?: (bin: HistogramBin, index: number) => void;
@@ -48,7 +50,7 @@ function niceMax(value: number): number {
  * one hue, more-is-darker. One series means no legend — the card title says
  * what is plotted.
  */
-export default function Histogram({ bins, height = 160, emptyMessage, onSelect }: HistogramProps) {
+export default function Histogram({ bins, label, height = 160, emptyMessage, onSelect }: HistogramProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -85,7 +87,7 @@ export default function Histogram({ bins, height = 160, emptyMessage, onSelect }
   return (
     <div ref={wrapRef} className="relative w-full" onPointerLeave={handleLeave}>
       {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label="Request latency distribution">
+        <svg width={width} height={height} role="img" aria-label={label}>
           {[0, max / 2, max].map((tick) => {
             const y = PADDING.top + plotHeight - (tick / max) * plotHeight;
             return (
@@ -118,7 +120,7 @@ export default function Histogram({ bins, height = 160, emptyMessage, onSelect }
                   fill="transparent"
                   tabIndex={0}
                   role={onSelect ? 'button' : undefined}
-                  aria-label={`${bin.range}: ${bin.count} requests`}
+                  aria-label={`${bin.range}: ${bin.count}`}
                   onPointerEnter={() => setHovered(i)}
                   onFocus={() => setHovered(i)}
                   onBlur={handleLeave}
@@ -177,7 +179,7 @@ export default function Histogram({ bins, height = 160, emptyMessage, onSelect }
             <span className="text-gray-100 font-medium tabular-nums">
               {bins[hovered].count.toLocaleString('en-GB')}
             </span>
-            <span className="text-gray-400">requests</span>
+            <span className="text-gray-400">items</span>
           </div>
           <div className="text-[10px] text-gray-400 mt-0.5">{bins[hovered].range}</div>
         </div>

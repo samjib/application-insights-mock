@@ -431,15 +431,25 @@ reach it from — an operation row there already knows which request to open.
 
 ## Already done
 
-### Charts on the overview
+### Per-view summaries
 
-| | |
+Each view carries its own summary strip above its list, scoped to exactly what
+the list is showing. There is no separate overview page — one page holding
+everything was more than anyone wanted at once.
+
+| View | Summary |
 |:--|:--|
-| Telemetry over time | Stacked columns by type across a shared time axis, with a legend and a per-bucket tooltip listing every series |
-| Request outcomes over time | Stacked columns by response-code class, using the reserved status roles — the chart that shows *when* it started failing |
-| Request latency | Histogram over log-ish buckets, sequential single-hue ramp |
-| Stat tiles | Each carries a sparkline of its own metric over the same axis |
-| Table rows | Requests-by-operation and dependencies-by-target carry a per-row volume sparkline; log categories carry a severity mix bar beside the numbers |
+| Live feed | Items and exceptions tiles · telemetry volume over time, stacked by type · slowest request operations |
+| Requests | Count with failure rate, p95 · outcomes over time by response-code class · latency distribution · slowest operations |
+| Dependencies | Count with failure rate, p95 · volume over time · latency distribution · slowest targets |
+| Exceptions | Count, distinct problems · volume over time · most frequent problems |
+| Traces | Count with warnings, categories · volume over time · noisiest categories |
+| Events | Count · volume over time |
+
+Every tile carries a sparkline; every breakdown row scopes the list below it.
+The strip collapses to a single toggle, and the choice travels in the URL and
+localStorage with the rest of the view state. Collapsing genuinely skips the
+work — the aggregation is not computed when the panel is closed.
 
 Colours were validated rather than chosen: `src/lib/chart-theme.ts` records the
 run. Tailwind's own ramps cannot pass — its `-400` steps sit above the lightness
@@ -448,20 +458,21 @@ under deuteranopia. The palette used is the app's hue families stepped for a dar
 surface, and the stacking order is load-bearing: yellow beside red fails the
 normal-vision floor, so exceptions sit on top of the stack instead.
 
-Every bucket is keyboard-reachable and carries the same readout on focus as on
-hover, and every value in a chart is also in a table, so nothing is gated behind
-a pointer.
+Every chart bucket is keyboard-reachable and carries the same readout on focus
+as on hover, and every charted value is also in a table, so nothing is gated
+behind a pointer.
 
-Measured on the overview with 19 charts live, recomputing on each 120 ms batch
-at ~9,000 items: frame p95 19.8 ms, zero long tasks.
+Measured on the Requests view with its summary live, recomputing on each 120 ms
+batch while streaming: frame p95 19.1 ms, zero long tasks; 17.0 ms with the
+summary collapsed.
 
-### Views and the overview
+### Views and columns
 
 | | Was |
 |:--|:--|
-| One generic feed | Seven views — Overview, Live feed, Requests, Dependencies, Exceptions, Traces, Events — each scoping the telemetry types and carrying columns suited to them |
+| One generic feed | Six views — Live feed, Requests, Dependencies, Exceptions, Traces, Events — each scoping the telemetry types and carrying columns suited to them |
 | One global column selection | Columns are remembered per view, with the view's own defaults until you choose otherwise and a "reset to defaults" in the picker |
-| No aggregate view | An Overview page: KPI tiles (items, requests and failure rate, request p95, dependencies, exceptions, traces at warning or above) and four drill-down tables — requests by operation, dependencies by target, exceptions by problem, log categories by severity — each row opening the matching view scoped to it |
+| No aggregate view | Each view carries its own summary strip — see above |
 | Type filter competed with the view | Hidden in a typed view, where it could only contradict the view; still available on the live feed |
 | "No telemetry yet" whenever the list was empty | Distinguishes an empty buffer from a filtered-out one, and offers to clear the filters |
 | `problemId` and `source` were not discoverable as columns | Both are now offered by column discovery |

@@ -86,7 +86,10 @@ export interface Insights {
   buckets: TimeBucket[];
   bucketMs: number;
   outcomes: OutcomeBucket[];
+  /** Request durations. */
   latency: LatencyBin[];
+  /** Dependency durations, on the same edges so the two read comparably. */
+  dependencyLatency: LatencyBin[];
   requestsByOperation: GroupRow[];
   dependenciesByTarget: GroupRow[];
   exceptionsByProblem: ExceptionRow[];
@@ -209,11 +212,19 @@ export function computeInsights(items: TelemetryItem[]): Insights {
     from: minTime + i * bucketMs,
     good: 0, warning: 0, critical: 0, serious: 0, total: 0,
   }));
-  const latency: LatencyBin[] = LATENCY_EDGES.slice(0, -1).map((edge, i) => ({
-    from: edge,
-    to: LATENCY_EDGES[i + 1],
-    count: 0,
-  }));
+  const makeBins = (): LatencyBin[] =>
+    LATENCY_EDGES.slice(0, -1).map((edge, i) => ({ from: edge, to: LATENCY_EDGES[i + 1], count: 0 }));
+  const latency = makeBins();
+  const dependencyLatency = makeBins();
+
+  const bin = (bins: LatencyBin[], ms: number): void => {
+    for (let i = 0; i < bins.length; i++) {
+      if (ms >= bins[i].from && ms < bins[i].to) {
+        bins[i].count++;
+        return;
+      }
+    }
+  };
 
   const requests = new Map<string, Accumulator>();
   const dependencies = new Map<string, Accumulator>();
@@ -263,14 +274,7 @@ export function computeInsights(items: TelemetryItem[]): Insights {
           outcomes[bucket].total++;
         }
 
-        if (ms !== undefined) {
-          for (let i = 0; i < latency.length; i++) {
-            if (ms >= latency[i].from && ms < latency[i].to) {
-              latency[i].count++;
-              break;
-            }
-          }
-        }
+        if (ms !== undefined) bin(latency, ms);
         break;
       }
 
@@ -284,6 +288,7 @@ export function computeInsights(items: TelemetryItem[]): Insights {
         if (!acc) dependencies.set(target, (acc = newAccumulator(bucketCount)));
         acc.detail = (bd?.type as string | undefined) ?? acc.detail;
         record(acc, ms, failed, bucket);
+        if (ms !== undefined) bin(dependencyLatency, ms);
         break;
       }
 
@@ -351,6 +356,7 @@ export function computeInsights(items: TelemetryItem[]): Insights {
     bucketMs,
     outcomes,
     latency,
+    dependencyLatency,
     requestsByOperation: toRows(requests),
     dependenciesByTarget: toRows(dependencies),
     exceptionsByProblem: Array.from(exceptions.values())
