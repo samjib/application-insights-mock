@@ -12,6 +12,7 @@ import {
   RequestData,
   SEVERITY_LEVEL_MAP,
   TelemetryItem,
+  formatDuration,
 } from '@/lib/types';
 
 interface TelemetryDetailProps {
@@ -127,7 +128,7 @@ function RequestDetail({ data, onSearch }: { data: RequestData; onSearch?: (valu
         <KeyValue label="ID" value={data.id} onSearch={onSearch} />
         <KeyValue label="Response Code" value={data.responseCode} onSearch={onSearch} />
         <KeyValue label="Success" value={data.success} />
-        <KeyValue label="Duration" value={data.duration} />
+        <KeyValue label="Duration" value={formatDuration(data.duration)} />
         <KeyValue label="Source" value={data.source} onSearch={onSearch} />
       </Section>
       {data.properties && Object.keys(data.properties).length > 0 && (
@@ -155,7 +156,7 @@ function DependencyDetail({ data, onSearch }: { data: RemoteDependencyData; onSe
         <KeyValue label="ID" value={data.id} onSearch={onSearch} />
         <KeyValue label="Result Code" value={data.resultCode} onSearch={onSearch} />
         <KeyValue label="Success" value={data.success} />
-        <KeyValue label="Duration" value={data.duration} />
+        <KeyValue label="Duration" value={formatDuration(data.duration)} />
       </Section>
       {data.properties && Object.keys(data.properties).length > 0 && (
         <Section title="Custom Properties">
@@ -297,7 +298,7 @@ function PageviewDetail({ data, onSearch }: { data: PageviewData; onSearch?: (va
         <KeyValue label="Name" value={data.name} onSearch={onSearch} />
         <KeyValue label="URL" value={data.url} onSearch={onSearch} />
         <KeyValue label="ID" value={data.id} onSearch={onSearch} />
-        <KeyValue label="Duration" value={data.duration} />
+        <KeyValue label="Duration" value={formatDuration(data.duration)} />
       </Section>
       {data.properties && Object.keys(data.properties).length > 0 && (
         <Section title="Custom Properties">
@@ -325,12 +326,12 @@ function PageviewPerfDetail({
       <Section title="Page View Performance">
         <KeyValue label="Name" value={data.name} onSearch={onSearch} />
         <KeyValue label="URL" value={data.url} onSearch={onSearch} />
-        <KeyValue label="Duration" value={data.duration} />
-        <KeyValue label="Total" value={data.perfTotal} />
-        <KeyValue label="Network Connect" value={data.networkConnect} />
-        <KeyValue label="Sent Request" value={data.sentRequest} />
-        <KeyValue label="Received Response" value={data.receivedResponse} />
-        <KeyValue label="DOM Processing" value={data.domProcessing} />
+        <KeyValue label="Duration" value={formatDuration(data.duration)} />
+        <KeyValue label="Total" value={formatDuration(data.perfTotal)} />
+        <KeyValue label="Network Connect" value={formatDuration(data.networkConnect)} />
+        <KeyValue label="Sent Request" value={formatDuration(data.sentRequest)} />
+        <KeyValue label="Received Response" value={formatDuration(data.receivedResponse)} />
+        <KeyValue label="DOM Processing" value={formatDuration(data.domProcessing)} />
       </Section>
       {data.properties && Object.keys(data.properties).length > 0 && (
         <Section title="Custom Properties">

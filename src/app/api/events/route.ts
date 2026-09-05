@@ -22,8 +22,18 @@ export async function GET(request: NextRequest) {
   const all = type ? telemetryStore.getByType(type) : telemetryStore.getAll();
 
   const limit = clampInt(params.get('limit'), 0, 0, telemetryStore.max);
-  const offset = clampInt(params.get('offset'), 0, 0, all.length);
-  const items = limit > 0 ? all.slice(offset, offset + limit) : all;
+  const rawOffset = params.get('offset');
+  const offset = clampInt(rawOffset, 0, 0, all.length);
+
+  // `?limit=N` on its own returns the N most recent items — the dashboard wants
+  // the tail of the buffer, not its head. Paging back through history is done by
+  // passing an explicit offset.
+  let items = all;
+  if (limit > 0) {
+    items = rawOffset === null ? all.slice(-limit) : all.slice(offset, offset + limit);
+  } else if (rawOffset !== null) {
+    items = all.slice(offset);
+  }
 
   return NextResponse.json(
     {

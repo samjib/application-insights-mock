@@ -176,6 +176,54 @@ export interface Envelope {
   data: TelemetryData;
 }
 
+// --- Formatting ---
+
+const TIMESPAN_RE = /^(-)?(?:(\d+)[.:])?(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)$/;
+
+/**
+ * Renders a duration the way a human reads it. Application Insights SDKs send
+ * either a .NET TimeSpan ("00:00:02.5000000", optionally "d.hh:mm:ss") or a raw
+ * millisecond count, both of which are unreadable at a glance in a live list.
+ * Anything unrecognised is passed through untouched.
+ */
+export function formatDuration(raw: string | number | undefined | null): string | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+
+  let ms: number;
+  if (typeof raw === 'number') {
+    ms = raw;
+  } else {
+    const m = TIMESPAN_RE.exec(raw.trim());
+    if (!m) {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return raw;
+      ms = n;
+    } else {
+      const [, sign, days, hours, minutes, seconds] = m;
+      ms =
+        ((Number(days ?? 0) * 24 + Number(hours)) * 3600 + Number(minutes) * 60 + Number(seconds)) * 1000;
+      if (sign) ms = -ms;
+    }
+  }
+
+  if (!Number.isFinite(ms)) return String(raw);
+
+  const abs = Math.abs(ms);
+  const sign = ms < 0 ? '-' : '';
+  if (abs < 1) return `${sign}${abs.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')} ms`;
+  if (abs < 1000) return `${sign}${Math.round(abs)} ms`;
+  if (abs < 60_000) return `${sign}${(abs / 1000).toFixed(abs < 10_000 ? 2 : 1)} s`;
+  if (abs < 3_600_000) {
+    const mins = Math.floor(abs / 60_000);
+    return `${sign}${mins}m ${Math.round((abs % 60_000) / 1000)}s`;
+  }
+  const hrs = Math.floor(abs / 3_600_000);
+  return `${sign}${hrs}h ${Math.round((abs % 3_600_000) / 60_000)}m`;
+}
+
+// Column keys whose values are durations and should be humanised for display.
+const DURATION_KEYS = new Set(['baseData.duration', 'baseData.perfTotal']);
+
 // --- Display types ---
 
 export type TelemetryType =
@@ -196,6 +244,20 @@ export interface TelemetryItem {
   type: TelemetryType;
   envelope: Envelope;
   summary: string;
+}
+
+// Runtime guard: telemetry arrives from arbitrary HTTP clients, so an envelope is
+// only trustworthy once it has been shape-checked. Anything that fails here is
+// rejected at ingest rather than stored as an item the UI cannot render.
+export function isEnvelope(value: unknown): value is Envelope {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const e = value as Record<string, unknown>;
+  if (e.name !== undefined && typeof e.name !== 'string') return false;
+  if (e.time !== undefined && typeof e.time !== 'string') return false;
+  if (e.tags !== undefined && (typeof e.tags !== 'object' || e.tags === null)) return false;
+  if (e.data !== undefined && (typeof e.data !== 'object' || e.data === null)) return false;
+  // An envelope carrying neither a name nor a data payload is not telemetry.
+  return typeof e.name === 'string' || typeof e.data === 'object';
 }
 
 // Map from envelope name/baseType to our display type
@@ -230,16 +292,16 @@ export function resolveType(envelope: Envelope): TelemetryType {
 
 export function buildSummary(type: TelemetryType, envelope: Envelope): string {
   const bd = envelope.data?.baseData;
-  if (!bd) return envelope.name;
+  if (!bd) return envelope.name ?? 'Unknown';
 
   switch (type) {
     case 'Request': {
       const d = bd as RequestData;
-      return `${d.name || d.url || 'Request'} → ${d.responseCode} (${d.duration})`;
+      return `${d.name || d.url || 'Request'} → ${d.responseCode} (${formatDuration(d.duration)})`;
     }
     case 'Dependency': {
       const d = bd as RemoteDependencyData;
-      return `${d.type || 'Dep'}: ${d.name || d.target || 'Dependency'} → ${d.resultCode || '?'} (${d.duration})`;
+      return `${d.type || 'Dep'}: ${d.name || d.target || 'Dependency'} → ${d.resultCode || '?'} (${formatDuration(d.duration)})`;
     }
     case 'Exception': {
       const d = bd as ExceptionData;
@@ -261,18 +323,18 @@ export function buildSummary(type: TelemetryType, envelope: Envelope): string {
     }
     case 'Availability': {
       const d = bd as AvailabilityData;
-      return `${d.name}: ${d.success ? 'Pass' : 'Fail'} (${d.duration})`;
+      return `${d.name}: ${d.success ? 'Pass' : 'Fail'} (${formatDuration(d.duration)})`;
     }
     case 'PageView': {
       const d = bd as PageviewData;
-      return `${d.name || d.url || 'PageView'}${d.duration ? ` (${d.duration})` : ''}`;
+      return `${d.name || d.url || 'PageView'}${d.duration ? ` (${formatDuration(d.duration)})` : ''}`;
     }
     case 'PageViewPerf': {
       const d = bd as PageviewPerformanceData;
-      return `${d.name || d.url || 'PageViewPerf'}${d.duration ? ` (${d.duration})` : ''}`;
+      return `${d.name || d.url || 'PageViewPerf'}${d.duration ? ` (${formatDuration(d.duration)})` : ''}`;
     }
     default:
-      return envelope.name;
+      return envelope.name ?? 'Unknown';
   }
 }
 
@@ -291,7 +353,11 @@ export function extractColumnValue(item: TelemetryItem, col: ColumnDef): string 
       const field = col.key.replace('baseData.', '');
       if (!bd) return undefined;
       const val = (bd as unknown as Record<string, unknown>)[field];
-      return val !== undefined && val !== null ? String(val) : undefined;
+      if (val === undefined || val === null) return undefined;
+      if (DURATION_KEYS.has(col.key) && (typeof val === 'string' || typeof val === 'number')) {
+        return formatDuration(val);
+      }
+      return String(val);
     }
     case 'tags': {
       const tag = col.key.replace('tags.', '');

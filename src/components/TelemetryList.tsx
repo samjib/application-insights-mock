@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ColumnDef, TelemetryItem } from '@/lib/types';
-import TelemetryItemRow from './TelemetryItemRow';
+import TelemetryItemRow, { ROW_HEIGHT } from './TelemetryItemRow';
+
+// Rows rendered above and below the viewport, so a fast scroll does not expose
+// blank space before the next frame lands.
+const OVERSCAN = 10;
 
 interface TelemetryListProps {
   items: TelemetryItem[];
@@ -12,6 +16,20 @@ interface TelemetryListProps {
   connectionString: string;
   copied: boolean;
   onCopyConnectionString: () => void;
+}
+
+function buildGridTemplate(extraColumns: ColumnDef[]): string {
+  // Header and rows share these tracks, so every column lines up regardless of
+  // which optional cells a given item happens to populate.
+  return [
+    '10rem', // time
+    '3rem', // type badge
+    '1.75rem', // severity
+    '1rem', // success marker
+    'minmax(0, 1fr)', // summary
+    ...extraColumns.map(() => '8rem'),
+    '12.5rem', // operation name
+  ].join(' ');
 }
 
 export default function TelemetryList({
@@ -24,27 +42,95 @@ export default function TelemetryList({
   onCopyConnectionString,
 }: TelemetryListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  // Track the head of the list so prepended items can be compensated for.
+  const prevHeadRef = useRef<{ id: number; length: number } | null>(null);
+
+  const gridTemplate = buildGridTemplate(extraColumns);
+  // The scroll container is unmounted while the empty state is showing, so the
+  // listeners below have to be re-attached when items first arrive.
+  const isEmpty = items.length === 0;
+
+  const readScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) setScrollTop(el.scrollTop);
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    function onScroll() {
-      if (el) setShowScrollTop(el.scrollTop > 200);
-    }
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
 
+    function onScroll() {
+      // Coalesce scroll events to one state update per frame.
+      if (rafRef.current !== null) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        readScroll();
+      });
+    }
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+
+    const observer = new ResizeObserver(([entry]) => {
+      setViewportHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    setViewportHeight(el.clientHeight);
+
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [readScroll, isEmpty]);
+
+  // Virtualising the list removes the browser's own scroll anchoring, so keep the
+  // row under the cursor put when newer items are inserted above it.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const prev = prevHeadRef.current;
+    prevHeadRef.current = items.length ? { id: items[0].id, length: items.length } : null;
+
+    if (!el || !prev || !items.length) return;
+    if (items[0].id === prev.id) return; // nothing new at the head
+    if (el.scrollTop === 0) return; // following the tail — let new rows push in
+
+    const idx = items.findIndex((i) => i.id === prev.id);
+    const inserted = idx === -1 ? items.length - prev.length : idx;
+    if (inserted > 0) {
+      el.scrollTop += inserted * ROW_HEIGHT;
+      setScrollTop(el.scrollTop);
+    }
+  }, [items]);
+
+  // Keep the selected row on screen when it is moved by the keyboard.
   useEffect(() => {
-    if (!selectedItem) return;
-    const el = document.getElementById(`telemetry-row-${selectedItem.id}`);
-    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [selectedItem]);
+    const el = scrollRef.current;
+    if (!el || !selectedItem || !viewportHeight) return;
+    const idx = items.findIndex((i) => i.id === selectedItem.id);
+    if (idx === -1) return;
+
+    const top = idx * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < el.scrollTop) {
+      el.scrollTop = top;
+      setScrollTop(top);
+    } else if (bottom > el.scrollTop + viewportHeight) {
+      el.scrollTop = bottom - viewportHeight;
+      setScrollTop(el.scrollTop);
+    }
+    // `items` is intentionally excluded: re-running on every batch would fight
+    // the scroll-anchoring effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem, viewportHeight]);
 
   const scrollToTop = () => {
-    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   if (items.length === 0) {
@@ -70,34 +156,48 @@ export default function TelemetryList({
     );
   }
 
+  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const visibleCount = Math.ceil((viewportHeight || 600) / ROW_HEIGHT) + OVERSCAN * 2;
+  const endIdx = Math.min(items.length, startIdx + visibleCount);
+  const visible = items.slice(startIdx, endIdx);
+
   return (
-    <div ref={containerRef} className="flex-1 flex flex-col relative min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0">
-        <span className="shrink-0 w-40">Time</span>
-        <span className="shrink-0 w-12 text-center">Type</span>
-        <span className="shrink-0 w-7">Sev</span>
-        <span className="shrink-0 w-3.5"></span>
-        <span className="flex-1">Summary</span>
+    <div className="flex-1 flex flex-col relative min-h-0">
+      <div
+        style={{ gridTemplateColumns: gridTemplate }}
+        className="grid items-center gap-2 px-3 py-1 border-b border-gray-200 dark:border-gray-700 border-l-2 border-l-transparent bg-gray-50 dark:bg-gray-900 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0"
+      >
+        <span>Time</span>
+        <span className="text-center">Type</span>
+        <span>Sev</span>
+        <span />
+        <span>Summary</span>
         {extraColumns.map((col) => (
-          <span key={col.key} className="shrink-0 max-w-32 truncate font-mono">
+          <span key={col.key} className="truncate font-mono" title={col.key}>
             {col.label}
           </span>
         ))}
-        <span className="shrink-0 max-w-50">Operation</span>
-      </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {items.map((item) => (
-          <TelemetryItemRow
-            key={item.id}
-            item={item}
-            isSelected={selectedItem?.id === item.id}
-            onClick={onSelect}
-            extraColumns={extraColumns}
-          />
-        ))}
+        <span className="truncate">Operation</span>
       </div>
 
-      {showScrollTop && (
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div style={{ height: items.length * ROW_HEIGHT }} className="relative">
+          <div style={{ transform: `translateY(${startIdx * ROW_HEIGHT}px)` }}>
+            {visible.map((item) => (
+              <TelemetryItemRow
+                key={item.id}
+                item={item}
+                isSelected={selectedItem?.id === item.id}
+                onClick={onSelect}
+                extraColumns={extraColumns}
+                gridTemplate={gridTemplate}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {scrollTop > 200 && (
         <button
           onClick={scrollToTop}
           className="absolute bottom-4 right-4 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-800/80 dark:bg-gray-200/80 text-white dark:text-gray-900 shadow-lg hover:bg-gray-700 dark:hover:bg-gray-300 transition-colors text-sm font-bold cursor-pointer"

@@ -69,13 +69,16 @@ export async function handleTrack(request: NextRequest) {
         : buffer.toString('utf-8');
 
     const envelopes = parseEnvelopes(bodyText);
-    telemetryStore.addMany(envelopes);
+    // Envelopes can be rejected by the store (malformed shape, or a dropped
+    // Metric), so report what was actually kept — SDKs use itemsAccepted to
+    // decide whether to retry.
+    const accepted = telemetryStore.addMany(envelopes).length;
     const iKey = envelopes[0]?.iKey;
 
     return NextResponse.json(
       {
         itemsReceived: envelopes.length,
-        itemsAccepted: envelopes.length,
+        itemsAccepted: accepted,
         errors: [],
       },
       { status: 200, headers: { ...CORS_HEADERS, ...requestContextHeader(iKey) } },

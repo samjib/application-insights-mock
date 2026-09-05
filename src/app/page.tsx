@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { ColumnDef, TelemetryItem, TelemetryType } from '@/lib/types';
 import FilterBar from '@/components/FilterBar';
 import TelemetryList from '@/components/TelemetryList';
@@ -8,6 +16,15 @@ import TelemetryDetail from '@/components/TelemetryDetail';
 
 const PLACEHOLDER_IKEY = '00000000-0000-0000-0000-000000000000';
 const FALLBACK_ORIGIN = 'http://localhost:3000';
+
+// Items pulled on first paint. The full ring buffer can be tens of megabytes of
+// JSON, which blocks the main thread long enough to be felt; older items are
+// still reachable through the API.
+const SNAPSHOT_LIMIT = 2000;
+
+// Incoming SSE batches are buffered for this long before being committed, so a
+// chatty app produces a few renders per second instead of one per HTTP request.
+const FLUSH_INTERVAL_MS = 120;
 
 function buildConnectionString(origin: string): string {
   return `InstrumentationKey=${PLACEHOLDER_IKEY};IngestionEndpoint=${origin}`;
@@ -25,12 +42,64 @@ function escapeRegex(s: string): string {
   return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function matchesCategoryFilter(filter: string, category: string): boolean {
-  if (filter.includes('*')) {
-    const pattern = '^' + escapeRegex(filter).replace(/\\\*/g, '.*') + '(\\..+)?$';
-    return new RegExp(pattern, 'i').test(category);
+/** Compiles one matcher per filter, rather than one per filter per item per render. */
+function buildCategoryMatchers(filters: string[]): ((category: string) => boolean)[] {
+  return filters.map((filter) => {
+    if (filter.includes('*')) {
+      const re = new RegExp('^' + escapeRegex(filter).replace(/\\\*/g, '.*') + '(\\..+)?$', 'i');
+      return (category: string) => re.test(category);
+    }
+    const prefix = filter + '.';
+    return (category: string) => category === filter || category.startsWith(prefix);
+  });
+}
+
+function readStoredColumnKeys(): string[] {
+  try {
+    const stored = localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    // A malformed value used to crash every load, and reloading could not clear
+    // it. Anything that is not a list of keys is discarded.
+    if (!Array.isArray(parsed) || !parsed.every((k) => typeof k === 'string')) {
+      localStorage.removeItem(COLUMNS_STORAGE_KEY);
+      return [];
+    }
+    return parsed as string[];
+  } catch {
+    return [];
   }
-  return category === filter || category.startsWith(filter + '.');
+}
+
+function getCategory(item: TelemetryItem): string | undefined {
+  return (item.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)
+    ?.properties?.CategoryName;
+}
+
+// Lowercased searchable text per item, built once and held only as long as the
+// item itself. Rebuilding this on every keystroke was the bulk of search cost.
+const haystackCache = new WeakMap<TelemetryItem, string>();
+
+function searchHaystack(item: TelemetryItem): string {
+  const cached = haystackCache.get(item);
+  if (cached !== undefined) return cached;
+
+  const parts: string[] = [item.summary ?? '', item.type];
+  const tags = item.envelope.tags;
+  if (tags) {
+    for (const v of Object.values(tags)) if (typeof v === 'string') parts.push(v);
+  }
+  const props = (item.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)
+    ?.properties;
+  if (props) {
+    for (const v of Object.values(props)) if (typeof v === 'string') parts.push(v);
+  }
+
+  // Joined with a separator that cannot occur in telemetry text, so a query
+  // never matches by spanning the boundary between two fields.
+  const value = parts.join('\u0000').toLowerCase();
+  haystackCache.set(item, value);
+  return value;
 }
 
 function mergeColumns(existing: ColumnDef[], fresh: ColumnDef[]): ColumnDef[] {
@@ -72,18 +141,23 @@ export default function Home() {
   const [dropMetrics, setDropMetrics] = useState(true);
   const [paused, setPaused] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [selectedColumnKeys, setSelectedColumnKeys] = useState<string[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const stored = localStorage.getItem(COLUMNS_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [selectedColumnKeys, setSelectedColumnKeys] = useState<string[]>([]);
+
+  // Read after mount: reading localStorage during render made the first client
+  // render differ from the server-rendered HTML. A one-shot hydration read is
+  // the intended pattern here, so the setState-in-effect rule does not apply.
+  useEffect(() => {
+    const stored = readStoredColumnKeys();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (stored.length) setSelectedColumnKeys(stored);
+  }, []);
+
   // SSR-safe origin: avoids hydration mismatch; handles reverse proxies automatically
   const origin = useSyncExternalStore(noopSubscribe, getOriginClient, getOriginServer);
   const connectionString = buildConnectionString(origin);
+
+  // Typing stays responsive while the (expensive) filtered list catches up.
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const pausedRef = useRef(paused);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -94,10 +168,30 @@ export default function Home() {
 
   useEffect(() => {
     let firstOpen = true;
+    let itemBuffer: TelemetryItem[] = [];
+    let columnBuffer: ColumnDef[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function flush() {
+      flushTimer = null;
+      const freshItems = itemBuffer;
+      const freshColumns = columnBuffer;
+      itemBuffer = [];
+      columnBuffer = [];
+
+      if (freshColumns.length) setColumns((prev) => mergeColumns(prev, freshColumns));
+      if (!freshItems.length) return;
+      if (pausedRef.current) setPendingItems((prev) => [...prev, ...freshItems]);
+      else setItems((prev) => [...prev, ...freshItems]);
+    }
+
+    function scheduleFlush() {
+      if (flushTimer === null) flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
+    }
 
     async function refreshState() {
       try {
-        const res = await fetch('/api/events');
+        const res = await fetch(`/api/events?limit=${SNAPSHOT_LIMIT}`);
         const d = await res.json();
         if (Array.isArray(d.items)) setItems(d.items);
         if (Array.isArray(d.columns)) setColumns(d.columns);
@@ -126,23 +220,17 @@ export default function Home() {
     es.onmessage = (event) => {
       try {
         const batch = JSON.parse(event.data) as Batch;
-        if (batch.newColumns?.length) {
-          setColumns((prev) => mergeColumns(prev, batch.newColumns!));
-        }
-        if (batch.items?.length) {
-          const fresh = batch.items;
-          if (pausedRef.current) {
-            setPendingItems((prev) => [...prev, ...fresh]);
-          } else {
-            setItems((prev) => [...prev, ...fresh]);
-          }
-        }
+        if (batch.newColumns?.length) columnBuffer.push(...batch.newColumns);
+        if (batch.items?.length) itemBuffer.push(...batch.items);
+        if (batch.newColumns?.length || batch.items?.length) scheduleFlush();
       } catch {
         // Ignore parse errors (keepalive comments)
       }
     };
 
     es.addEventListener('clear', () => {
+      itemBuffer = [];
+      columnBuffer = [];
       setItems([]);
       setPendingItems([]);
       setColumns([]);
@@ -151,7 +239,10 @@ export default function Home() {
 
     es.onerror = () => setConnected(false);
 
-    return () => es.close();
+    return () => {
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      es.close();
+    };
   }, []);
 
   const handleClear = useCallback(() => {
@@ -204,6 +295,8 @@ export default function Home() {
     setSelectedItem(null);
   }, []);
 
+  const categoryMatchers = useMemo(() => buildCategoryMatchers(categoryFilters), [categoryFilters]);
+
   const filteredItems = useMemo(() => {
     let result = items;
 
@@ -215,47 +308,30 @@ export default function Home() {
       result = result.filter((i) => i.envelope.tags?.['ai.operation.id'] === operationFilter);
     }
 
-    if (categoryFilters.length > 0) {
+    if (categoryMatchers.length > 0) {
       result = result.filter((i) => {
-        const cat = (i.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)
-          ?.properties?.CategoryName;
+        const cat = getCategory(i);
         if (!cat) return false;
-        return categoryFilters.some((f) => matchesCategoryFilter(f, cat));
+        return categoryMatchers.some((match) => match(cat));
       });
     }
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter((i) => {
-        if (i.summary.toLowerCase().includes(q)) return true;
-        if (i.type.toLowerCase().includes(q)) return true;
-        const tags = i.envelope.tags;
-        if (tags) {
-          for (const v of Object.values(tags)) {
-            if (typeof v === 'string' && v.toLowerCase().includes(q)) return true;
-          }
-        }
-        const props = (i.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)?.properties;
-        if (props) {
-          for (const v of Object.values(props)) {
-            if (typeof v === 'string' && v.toLowerCase().includes(q)) return true;
-          }
-        }
-        return false;
-      });
+    const q = deferredSearchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((i) => searchHaystack(i).includes(q));
     }
 
     return result.slice().sort((a, b) => {
       if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
       return b.id - a.id;
     });
-  }, [items, hiddenTypes, searchQuery, categoryFilters, operationFilter]);
+  }, [items, hiddenTypes, deferredSearchQuery, categoryMatchers, operationFilter]);
 
   const availableCategories = useMemo(() => {
     const leafCats = new Set<string>();
     for (const item of items) {
-      const props = (item.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)?.properties;
-      if (props?.CategoryName) leafCats.add(props.CategoryName);
+      const cat = getCategory(item);
+      if (cat) leafCats.add(cat);
     }
     const allPrefixes = new Set<string>();
     for (const cat of leafCats) {
@@ -281,6 +357,13 @@ export default function Home() {
     [columns, selectedColumnKeys],
   );
 
+  // Keyboard handling reads through a ref so the window listener is registered
+  // once, rather than being torn down and rebuilt on every incoming batch.
+  const latest = useRef({ filteredItems, selectedItem, operationFilter, searchQuery, handleTogglePause });
+  useEffect(() => {
+    latest.current = { filteredItems, selectedItem, operationFilter, searchQuery, handleTogglePause };
+  });
+
   useEffect(() => {
     function isTyping(target: EventTarget | null): boolean {
       if (!(target instanceof HTMLElement)) return false;
@@ -292,14 +375,13 @@ export default function Home() {
     }
 
     function navigate(delta: number) {
-      if (filteredItems.length === 0) return;
-      const currentIdx = selectedItem
-        ? filteredItems.findIndex((i) => i.id === selectedItem.id)
-        : -1;
+      const { filteredItems: list, selectedItem: selected } = latest.current;
+      if (list.length === 0) return;
+      const currentIdx = selected ? list.findIndex((i) => i.id === selected.id) : -1;
       const nextIdx = currentIdx === -1
-        ? (delta > 0 ? 0 : filteredItems.length - 1)
-        : Math.min(filteredItems.length - 1, Math.max(0, currentIdx + delta));
-      setSelectedItem(filteredItems[nextIdx]);
+        ? (delta > 0 ? 0 : list.length - 1)
+        : Math.min(list.length - 1, Math.max(0, currentIdx + delta));
+      setSelectedItem(list[nextIdx]);
     }
 
     function handleKey(e: KeyboardEvent) {
@@ -307,19 +389,20 @@ export default function Home() {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;
       }
+      const { selectedItem: selected, operationFilter: opFilter, searchQuery: query } = latest.current;
       switch (e.key) {
         case '/':
           e.preventDefault();
           searchInputRef.current?.focus();
           break;
         case 'Escape':
-          if (selectedItem) setSelectedItem(null);
-          else if (operationFilter) setOperationFilter(null);
-          else if (searchQuery) setSearchQuery('');
+          if (selected) setSelectedItem(null);
+          else if (opFilter) setOperationFilter(null);
+          else if (query) setSearchQuery('');
           break;
         case ' ':
           e.preventDefault();
-          handleTogglePause();
+          latest.current.handleTogglePause();
           break;
         case 'j':
         case 'ArrowDown':
@@ -336,7 +419,7 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [filteredItems, selectedItem, operationFilter, searchQuery, handleTogglePause]);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-gray-950">
@@ -411,7 +494,7 @@ export default function Home() {
       />
 
       <div className="flex-1 flex min-h-0">
-        <div className={`flex flex-col min-h-0 ${selectedItem ? 'w-1/2' : 'w-full'} transition-all`}>
+        <div className={`flex flex-col min-h-0 ${selectedItem ? 'w-1/2' : 'w-full'}`}>
           <TelemetryList
             items={filteredItems}
             selectedItem={selectedItem}

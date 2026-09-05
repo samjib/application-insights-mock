@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { ColumnDef, Envelope, TelemetryItem, buildSummary, resolveType } from './types';
+import { ColumnDef, Envelope, TelemetryItem, buildSummary, isEnvelope, resolveType } from './types';
 
 const DEFAULT_CAPACITY = 10_000;
 const MIN_CAPACITY = 100;
@@ -91,6 +91,10 @@ class TelemetryStore {
   }
 
   private push(envelope: Envelope): TelemetryItem | null {
+    // Telemetry comes from arbitrary HTTP clients. Storing a malformed envelope
+    // hands the dashboard an item it cannot render, so reject it here instead.
+    if (!isEnvelope(envelope)) return null;
+
     const type = resolveType(envelope);
     if (this.dropMetrics && type === 'Metric') return null;
 

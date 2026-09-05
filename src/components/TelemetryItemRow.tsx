@@ -2,6 +2,9 @@
 
 import { TelemetryItem, ColumnDef, extractColumnValue } from '@/lib/types';
 
+// Rows are a fixed height so the list can be virtualised without measuring.
+export const ROW_HEIGHT = 32;
+
 const TYPE_BADGE_COLORS: Record<string, string> = {
   Request: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300',
   Dependency: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300',
@@ -88,28 +91,37 @@ interface TelemetryItemRowProps {
   isSelected: boolean;
   onClick: (item: TelemetryItem) => void;
   extraColumns: ColumnDef[];
+  gridTemplate: string;
 }
 
-export default function TelemetryItemRow({ item, isSelected, onClick, extraColumns }: TelemetryItemRowProps) {
+export default function TelemetryItemRow({
+  item,
+  isSelected,
+  onClick,
+  extraColumns,
+  gridTemplate,
+}: TelemetryItemRowProps) {
   const severity = getSeverity(item);
   const success = getSuccess(item);
+  const operation = item.envelope.tags?.['ai.operation.name'];
 
   return (
     <div
       id={`telemetry-row-${item.id}`}
       onClick={() => onClick(item)}
-      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer border-b border-gray-100 dark:border-gray-800 transition-colors text-sm ${
+      style={{ height: ROW_HEIGHT, gridTemplateColumns: gridTemplate }}
+      className={`grid items-center gap-2 px-3 cursor-pointer border-b border-gray-100 dark:border-gray-800 text-sm ${
         isSelected
           ? 'bg-blue-50 dark:bg-blue-950 border-l-2 border-l-blue-500'
           : 'hover:bg-gray-50 dark:hover:bg-gray-800/50 border-l-2 border-l-transparent'
       } ${success === false ? 'bg-red-50/30 dark:bg-red-950/20' : ''}`}
     >
-      <span className="text-xs text-gray-400 dark:text-gray-500 font-mono tabular-nums shrink-0 w-40">
+      <span className="text-xs text-gray-400 dark:text-gray-500 font-mono tabular-nums truncate">
         {formatTime(item.timestamp)}
       </span>
 
       <span
-        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 w-12 text-center ${
+        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded text-center ${
           TYPE_BADGE_COLORS[item.type] || TYPE_BADGE_COLORS.Unknown
         }`}
         title={item.type}
@@ -117,28 +129,27 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
         {TYPE_BADGE_LABELS[item.type] || '?'}
       </span>
 
-      {severity !== undefined && (
-        <span className={`text-[10px] font-mono shrink-0 w-7 ${SEVERITY_COLORS[severity] || ''}`}>
-          {SEVERITY_LABELS[severity] || ''}
-        </span>
-      )}
-      {severity === undefined && <span className="w-7 shrink-0" />}
+      <span className={`text-[10px] font-mono ${severity !== undefined ? SEVERITY_COLORS[severity] ?? '' : ''}`}>
+        {severity !== undefined ? SEVERITY_LABELS[severity] ?? '' : ''}
+      </span>
 
-      {success !== undefined && (
-        <span className={`text-xs shrink-0 ${success ? 'text-emerald-500' : 'text-red-500'}`}>
-          {success ? '✓' : '✗'}
-        </span>
-      )}
-      {success === undefined && <span className="w-3.5 shrink-0" />}
+      <span
+        className={`text-xs text-center ${success === false ? 'text-red-500' : 'text-emerald-500'}`}
+        title={success === undefined ? undefined : success ? 'Succeeded' : 'Failed'}
+      >
+        {success === undefined ? '' : success ? '✓' : '✗'}
+      </span>
 
-      <span className="truncate text-gray-700 dark:text-gray-300 flex-1">{item.summary}</span>
+      <span className="truncate text-gray-700 dark:text-gray-300" title={item.summary}>
+        {item.summary}
+      </span>
 
       {extraColumns.map((col) => {
         const val = extractColumnValue(item, col);
         return (
           <span
             key={col.key}
-            className="text-xs text-gray-400 dark:text-gray-500 truncate max-w-32 shrink-0 font-mono"
+            className="text-xs text-gray-400 dark:text-gray-500 truncate font-mono"
             title={`${col.label}: ${val ?? '—'}`}
           >
             {val ?? '—'}
@@ -146,11 +157,9 @@ export default function TelemetryItemRow({ item, isSelected, onClick, extraColum
         );
       })}
 
-      {item.envelope.tags?.['ai.operation.name'] && (
-        <span className="text-xs text-gray-400 dark:text-gray-500 truncate max-w-50 shrink-0">
-          {item.envelope.tags['ai.operation.name']}
-        </span>
-      )}
+      <span className="text-xs text-gray-400 dark:text-gray-500 truncate" title={operation}>
+        {operation ?? ''}
+      </span>
     </div>
   );
 }
