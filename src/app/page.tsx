@@ -10,7 +10,17 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { ColumnDef, TelemetryItem, TelemetryType } from '@/lib/types';
+import { matchesQuery, parseQuery, warmSearchIndex } from '@/lib/search';
+import {
+  DEFAULT_SPLIT,
+  EMPTY_VIEW,
+  ViewState,
+  loadViewState,
+  saveViewState,
+  syncUrl,
+} from '@/lib/view-state';
 import FilterBar from '@/components/FilterBar';
+import Splitter from '@/components/Splitter';
 import TelemetryList from '@/components/TelemetryList';
 import TelemetryDetail from '@/components/TelemetryDetail';
 
@@ -26,6 +36,10 @@ const SNAPSHOT_LIMIT = 2000;
 // chatty app produces a few renders per second instead of one per HTTP request.
 const FLUSH_INTERVAL_MS = 120;
 
+// The view is written to the URL and localStorage this long after it settles,
+// so typing and dragging the splitter do not each cost a write.
+const VIEW_SYNC_DEBOUNCE_MS = 250;
+
 function buildConnectionString(origin: string): string {
   return `InstrumentationKey=${PLACEHOLDER_IKEY};IngestionEndpoint=${origin}`;
 }
@@ -33,8 +47,6 @@ function buildConnectionString(origin: string): string {
 const noopSubscribe = () => () => {};
 const getOriginClient = () => window.location.origin;
 const getOriginServer = () => FALLBACK_ORIGIN;
-
-const COLUMNS_STORAGE_KEY = 'mock-ai-columns';
 
 type Batch = { items?: TelemetryItem[]; newColumns?: ColumnDef[] };
 
@@ -54,52 +66,9 @@ function buildCategoryMatchers(filters: string[]): ((category: string) => boolea
   });
 }
 
-function readStoredColumnKeys(): string[] {
-  try {
-    const stored = localStorage.getItem(COLUMNS_STORAGE_KEY);
-    if (!stored) return [];
-    const parsed: unknown = JSON.parse(stored);
-    // A malformed value used to crash every load, and reloading could not clear
-    // it. Anything that is not a list of keys is discarded.
-    if (!Array.isArray(parsed) || !parsed.every((k) => typeof k === 'string')) {
-      localStorage.removeItem(COLUMNS_STORAGE_KEY);
-      return [];
-    }
-    return parsed as string[];
-  } catch {
-    return [];
-  }
-}
-
 function getCategory(item: TelemetryItem): string | undefined {
   return (item.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)
     ?.properties?.CategoryName;
-}
-
-// Lowercased searchable text per item, built once and held only as long as the
-// item itself. Rebuilding this on every keystroke was the bulk of search cost.
-const haystackCache = new WeakMap<TelemetryItem, string>();
-
-function searchHaystack(item: TelemetryItem): string {
-  const cached = haystackCache.get(item);
-  if (cached !== undefined) return cached;
-
-  const parts: string[] = [item.summary ?? '', item.type];
-  const tags = item.envelope.tags;
-  if (tags) {
-    for (const v of Object.values(tags)) if (typeof v === 'string') parts.push(v);
-  }
-  const props = (item.envelope.data?.baseData as { properties?: Record<string, string> } | undefined)
-    ?.properties;
-  if (props) {
-    for (const v of Object.values(props)) if (typeof v === 'string') parts.push(v);
-  }
-
-  // Joined with a separator that cannot occur in telemetry text, so a query
-  // never matches by spanning the boundary between two fields.
-  const value = parts.join('\u0000').toLowerCase();
-  haystackCache.set(item, value);
-  return value;
 }
 
 function mergeColumns(existing: ColumnDef[], fresh: ColumnDef[]): ColumnDef[] {
@@ -133,34 +102,48 @@ export default function Home() {
   const [pendingItems, setPendingItems] = useState<TelemetryItem[]>([]);
   const [columns, setColumns] = useState<ColumnDef[]>([]);
   const [selectedItem, setSelectedItem] = useState<TelemetryItem | null>(null);
-  const [hiddenTypes, setHiddenTypes] = useState<Set<TelemetryType>>(new Set());
-  const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilters, setCategoryFilters] = useState<string[]>([]);
-  const [operationFilter, setOperationFilter] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [dropMetrics, setDropMetrics] = useState(true);
   const [paused, setPaused] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [selectedColumnKeys, setSelectedColumnKeys] = useState<string[]>([]);
 
-  // Read after mount: reading localStorage during render made the first client
-  // render differ from the server-rendered HTML. A one-shot hydration read is
-  // the intended pattern here, so the setState-in-effect rule does not apply.
+  // Everything worth sharing or restoring lives in one object, so it round-trips
+  // through the URL and localStorage as a unit.
+  const [view, setView] = useState<ViewState>(EMPTY_VIEW);
+  const [hydrated, setHydrated] = useState(false);
+
+  const paneRef = useRef<HTMLDivElement>(null);
+  const pausedRef = useRef(paused);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Restore after mount: reading the URL or localStorage during render would make
+  // the first client render disagree with the server-rendered HTML.
   useEffect(() => {
-    const stored = readStoredColumnKeys();
+    const restored = loadViewState(window.location.search);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (stored.length) setSelectedColumnKeys(stored);
+    setView(restored);
+    setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(() => {
+      syncUrl(view);
+      saveViewState(view);
+    }, VIEW_SYNC_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [view, hydrated]);
 
   // SSR-safe origin: avoids hydration mismatch; handles reverse proxies automatically
   const origin = useSyncExternalStore(noopSubscribe, getOriginClient, getOriginServer);
   const connectionString = buildConnectionString(origin);
 
   // Typing stays responsive while the (expensive) filtered list catches up.
-  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const deferredSearch = useDeferredValue(view.search);
+  const query = useMemo(() => parseQuery(deferredSearch), [deferredSearch]);
 
-  const pausedRef = useRef(paused);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const hiddenTypes = useMemo(() => new Set(view.hiddenTypes), [view.hiddenTypes]);
+  const splitFraction = view.splitFraction ?? DEFAULT_SPLIT;
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -278,24 +261,49 @@ export default function Home() {
     else setPaused(true);
   }, [paused, handleResume]);
 
+  const setSearch = useCallback((search: string) => {
+    setView((v) => ({ ...v, search }));
+  }, []);
+
+  const handleTypeToggle = useCallback((type: TelemetryType) => {
+    setView((v) => ({
+      ...v,
+      hiddenTypes: v.hiddenTypes.includes(type)
+        ? v.hiddenTypes.filter((t) => t !== type)
+        : [...v.hiddenTypes, type],
+    }));
+  }, []);
+
+  const handleCategoryFiltersChange = useCallback((categoryFilters: string[]) => {
+    setView((v) => ({ ...v, categoryFilters }));
+  }, []);
+
   const handleColumnToggle = useCallback((key: string) => {
-    setSelectedColumnKeys((prev) => {
-      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
-      try {
-        localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* noop */
-      }
-      return next;
-    });
+    setView((v) => ({
+      ...v,
+      columnKeys: v.columnKeys.includes(key)
+        ? v.columnKeys.filter((k) => k !== key)
+        : [...v.columnKeys, key],
+    }));
   }, []);
 
   const handleFilterByOperation = useCallback((opId: string) => {
-    setOperationFilter(opId);
+    setView((v) => ({ ...v, operationFilter: opId }));
     setSelectedItem(null);
   }, []);
 
-  const categoryMatchers = useMemo(() => buildCategoryMatchers(categoryFilters), [categoryFilters]);
+  const handleClearOperationFilter = useCallback(() => {
+    setView((v) => ({ ...v, operationFilter: null }));
+  }, []);
+
+  const handleSplitChange = useCallback((splitFraction: number) => {
+    setView((v) => ({ ...v, splitFraction }));
+  }, []);
+
+  const categoryMatchers = useMemo(
+    () => buildCategoryMatchers(view.categoryFilters),
+    [view.categoryFilters],
+  );
 
   const filteredItems = useMemo(() => {
     let result = items;
@@ -304,8 +312,8 @@ export default function Home() {
       result = result.filter((i) => !hiddenTypes.has(i.type));
     }
 
-    if (operationFilter) {
-      result = result.filter((i) => i.envelope.tags?.['ai.operation.id'] === operationFilter);
+    if (view.operationFilter) {
+      result = result.filter((i) => i.envelope.tags?.['ai.operation.id'] === view.operationFilter);
     }
 
     if (categoryMatchers.length > 0) {
@@ -316,16 +324,15 @@ export default function Home() {
       });
     }
 
-    const q = deferredSearchQuery.trim().toLowerCase();
-    if (q) {
-      result = result.filter((i) => searchHaystack(i).includes(q));
+    if (query.terms.length > 0) {
+      result = result.filter((i) => matchesQuery(i, query));
     }
 
     return result.slice().sort((a, b) => {
       if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
       return b.id - a.id;
     });
-  }, [items, hiddenTypes, deferredSearchQuery, categoryMatchers, operationFilter]);
+  }, [items, hiddenTypes, query, categoryMatchers, view.operationFilter]);
 
   const availableCategories = useMemo(() => {
     const leafCats = new Set<string>();
@@ -353,15 +360,44 @@ export default function Home() {
   }, [items]);
 
   const extraColumns = useMemo(
-    () => columns.filter((c) => selectedColumnKeys.includes(c.key)),
-    [columns, selectedColumnKeys],
+    () => columns.filter((c) => view.columnKeys.includes(c.key)),
+    [columns, view.columnKeys],
   );
+
+  // Index newly arrived items while the browser is idle, so the first search of a
+  // session does not stall on the whole buffer at once.
+  useEffect(() => {
+    if (items.length === 0) return;
+    let cancelled = false;
+    let handle: number | undefined;
+
+    const schedule: typeof window.requestIdleCallback =
+      typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : (cb) => window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 8 }), 200);
+    const cancel: typeof window.cancelIdleCallback =
+      typeof window.cancelIdleCallback === 'function'
+        ? window.cancelIdleCallback.bind(window)
+        : (id) => window.clearTimeout(id);
+
+    function step(deadline: IdleDeadline) {
+      if (cancelled) return;
+      const done = warmSearchIndex(items, Math.max(4, deadline.timeRemaining()));
+      if (!done) handle = schedule(step);
+    }
+
+    handle = schedule(step);
+    return () => {
+      cancelled = true;
+      if (handle !== undefined) cancel(handle);
+    };
+  }, [items]);
 
   // Keyboard handling reads through a ref so the window listener is registered
   // once, rather than being torn down and rebuilt on every incoming batch.
-  const latest = useRef({ filteredItems, selectedItem, operationFilter, searchQuery, handleTogglePause });
+  const latest = useRef({ filteredItems, selectedItem, view, handleTogglePause });
   useEffect(() => {
-    latest.current = { filteredItems, selectedItem, operationFilter, searchQuery, handleTogglePause };
+    latest.current = { filteredItems, selectedItem, view, handleTogglePause };
   });
 
   useEffect(() => {
@@ -389,7 +425,7 @@ export default function Home() {
         if (e.key === 'Escape') (e.target as HTMLElement).blur();
         return;
       }
-      const { selectedItem: selected, operationFilter: opFilter, searchQuery: query } = latest.current;
+      const { selectedItem: selected, view: current } = latest.current;
       switch (e.key) {
         case '/':
           e.preventDefault();
@@ -397,8 +433,8 @@ export default function Home() {
           break;
         case 'Escape':
           if (selected) setSelectedItem(null);
-          else if (opFilter) setOperationFilter(null);
-          else if (query) setSearchQuery('');
+          else if (current.operationFilter) handleClearOperationFilter();
+          else if (current.search) setSearch('');
           break;
         case ' ':
           e.preventDefault();
@@ -419,7 +455,7 @@ export default function Home() {
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, []);
+  }, [handleClearOperationFilter, setSearch]);
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-gray-950">
@@ -455,21 +491,14 @@ export default function Home() {
       <FilterBar
         searchInputRef={searchInputRef}
         hiddenTypes={hiddenTypes}
-        onTypeToggle={(type) =>
-          setHiddenTypes((prev) => {
-            const next = new Set(prev);
-            if (next.has(type)) next.delete(type);
-            else next.add(type);
-            return next;
-          })
-        }
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        categoryFilters={categoryFilters}
-        onCategoryFiltersChange={setCategoryFilters}
+        onTypeToggle={handleTypeToggle}
+        searchQuery={view.search}
+        onSearchChange={setSearch}
+        categoryFilters={view.categoryFilters}
+        onCategoryFiltersChange={handleCategoryFiltersChange}
         availableCategories={availableCategories}
-        operationFilter={operationFilter}
-        onClearOperationFilter={() => setOperationFilter(null)}
+        operationFilter={view.operationFilter}
+        onClearOperationFilter={handleClearOperationFilter}
         itemCount={filteredItems.length}
         totalItemCount={items.length}
         pendingCount={pendingItems.length}
@@ -489,17 +518,21 @@ export default function Home() {
         }}
         typeCounts={typeCounts}
         availableColumns={columns}
-        selectedColumnKeys={selectedColumnKeys}
+        selectedColumnKeys={view.columnKeys}
         onColumnToggle={handleColumnToggle}
       />
 
-      <div className="flex-1 flex min-h-0">
-        <div className={`flex flex-col min-h-0 ${selectedItem ? 'w-1/2' : 'w-full'}`}>
+      <div ref={paneRef} className="flex-1 flex min-h-0">
+        <div
+          className="flex flex-col min-h-0"
+          style={{ width: selectedItem ? `${splitFraction * 100}%` : '100%' }}
+        >
           <TelemetryList
             items={filteredItems}
             selectedItem={selectedItem}
             onSelect={handleSelect}
             extraColumns={extraColumns}
+            highlightTerms={query.highlights}
             onCopyConnectionString={handleCopyConnectionString}
             copied={copied}
             connectionString={connectionString}
@@ -507,14 +540,17 @@ export default function Home() {
         </div>
 
         {selectedItem && (
-          <div className="w-1/2">
-            <TelemetryDetail
-              item={selectedItem}
-              onClose={() => setSelectedItem(null)}
-              onSearch={setSearchQuery}
-              onFilterByOperation={handleFilterByOperation}
-            />
-          </div>
+          <>
+            <Splitter containerRef={paneRef} fraction={splitFraction} onChange={handleSplitChange} />
+            <div className="flex-1 min-w-0">
+              <TelemetryDetail
+                item={selectedItem}
+                onClose={() => setSelectedItem(null)}
+                onSearch={setSearch}
+                onFilterByOperation={handleFilterByOperation}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>

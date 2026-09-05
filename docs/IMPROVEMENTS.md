@@ -66,7 +66,9 @@ already in the response) on each flush. Do the same for `pendingItems`, which
 accumulates without limit while paused.
 
 > Now that the list is virtualised this is a memory problem rather than a
-> rendering one, but it is the single largest remaining resource issue.
+> rendering one, but it is the single largest remaining resource issue — and each
+> item now also carries a cached search index, so it costs more per item than it
+> used to.
 
 ### 1.5 Reconnect silently drops history — S3
 `src/app/page.tsx` (`refreshState` on `es.onopen`)
@@ -160,17 +162,8 @@ copies only the tail.
 
 ## 3. Layout and visual
 
-### 3.1 The detail split is fixed at 50/50 — S2
-`src/app/page.tsx` (`w-1/2`)
-
-The list is squeezed to half the window while the detail pane usually has large
-empty space below the content.
-
-**Fix:** a draggable splitter with the position persisted; 60/40 favouring the
-list as the default.
-
-### 3.2 Native checkboxes ignore their colour classes — S2
-`src/components/ColumnPicker.tsx:111`, `src/components/FilterBar.tsx:391`
+### 3.1 Native checkboxes ignore their colour classes — S2
+`src/components/ColumnPicker.tsx`, `src/components/FilterBar.tsx`
 
 `className="rounded text-indigo-600"` does nothing to a native checkbox — it
 renders in the browser's default blue, which clashes with the dark theme and
@@ -179,7 +172,7 @@ with the custom checkmarks used in the Types dropdown.
 **Fix:** `accent-indigo-600` / `accent-orange-600`, or reuse the Types dropdown's
 custom control everywhere.
 
-### 3.3 Critical severity is the least legible — S2
+### 3.2 Critical severity is the least legible — S2
 `src/components/TelemetryItemRow.tsx` (`SEVERITY_COLORS[4]`)
 
 `text-red-700` on a `gray-950` background fails WCAG contrast. Critical should be
@@ -188,21 +181,21 @@ the most readable severity, not the least.
 **Fix:** move to `text-red-300`/`text-red-400` and check the whole severity ramp
 against the dark background.
 
-### 3.4 `Clear All` has no confirmation — S2
-`src/components/FilterBar.tsx:405`
+### 3.3 `Clear All` has no confirmation — S2
+`src/components/FilterBar.tsx`
 
 One misclick discards the entire buffer with no undo.
 
 **Fix:** require a confirm step, or clear immediately with a few seconds of undo.
 
-### 3.5 Response codes are not colour-coded — S3
+### 3.4 Response codes are not colour-coded — S3
 
 Failure is conveyed only by the `✓`/`✗` column. A `500` reads identically to a
 `200` in the summary and the response-code column.
 
 **Fix:** colour 4xx amber and 5xx red in both places.
 
-### 3.6 Detail pane polish — S3
+### 3.5 Detail pane polish — S3
 `src/components/TelemetryDetail.tsx`
 
 - No copy button on the Raw JSON view.
@@ -424,28 +417,8 @@ Rendering a request with its dependencies and traces as a timeline is the single
 feature that would make this meaningfully better than reading raw JSON, and most
 of the data plumbing already exists.
 
-### 9.2 URL-addressable state — S2
+### 9.2 Smaller wins — S3
 
-Filters and the selected item live only in component state, so a view cannot be
-shared, bookmarked or restored across a reload.
-
-**Fix:** mirror filters and the selected id into the query string.
-
-### 9.3 Filter persistence — S3
-
-Column selection persists to `localStorage`; hidden types, category filters,
-search and pause do not. Persist all of it or none of it.
-
-### 9.4 A "new items" affordance — S3
-
-Scrolled away from the top, hundreds of items can arrive with no indication.
-The row under the cursor correctly stays put, so nothing signals the change.
-
-**Fix:** a "N new ↑" pill that scrolls to top when clicked.
-
-### 9.5 Smaller wins — S3
-
-- Highlight the matched substring in search results.
 - A delta column: time since the previous item in the operation.
 - Relative timestamps ("2s ago") alongside absolute ones.
 - Copy-as-curl for requests and dependencies.
@@ -456,6 +429,33 @@ The row under the cursor correctly stays put, so nothing signals the change.
 ---
 
 ## Already done
+
+### Search and filtering
+
+| | Was |
+|:--|:--|
+| Search reached only 4 sources | Summary, type, tag values and custom properties. A dependency's SQL text, a request URL when `name` was also set, exception stack traces, `problemId` and `target` were all unreachable — the things you most want to search in a telemetry debugger |
+| One substring, no operators | Now `a b` (AND), `"quoted phrase"`, `-exclude`, `field:value`, `-field:value`, and any custom property or tag key as a field. A `field:` prefix naming nothing known falls back to a plain search, so pasting a URL still works |
+| No indication of *why* a row matched | Matches are highlighted in the summary, extra columns and operation name |
+| Filters vanished on reload | Search, hidden types, category filters, operation filter, columns and split position round-trip through the URL and localStorage; a URL carrying any view parameter wins over local history, so a shared link opens the same view in someone else's browser |
+| Detail pane fixed at 50/50 | Draggable splitter, 25–80%, default 60% favouring the list, keyboard-adjustable, double-click to centre, persisted with the rest of the view |
+| No signal when items arrived off-screen | A "N new ↑" pill appears when items land above the scroll position, and clears on return to the top |
+| Trailing columns crowded the summary when narrow | The grid drops the operation column and tightens the others below 720px, so the summary keeps its width instead of collapsing to nothing |
+
+The search index is built per item and cached against the item itself, and warmed
+during idle time, so the first query does not stall on the whole buffer.
+
+Measured at ~9k items:
+
+| | Before | After |
+|:--|--:|--:|
+| First search keystroke → paint | 148 ms | 21 ms |
+| Subsequent keystrokes | 26–38 ms | 26–38 ms |
+| Live-burst frame p95 | 17 ms | 17 ms (unchanged) |
+| Live-burst long tasks | none | none |
+| JS heap | 13 MB | 43 MB — the cost of indexing every field of every item |
+
+### Rendering and correctness
 
 Fixed in `perf: virtualise the telemetry list and fix the crashes it exposed`:
 
@@ -469,7 +469,7 @@ Fixed in `perf: virtualise the telemetry list and fix the crashes it exposed`:
 | Table columns were ragged | Trailing columns were content-sized and conditionally rendered, so no two rows agreed on where a column started |
 | Durations shown as raw TimeSpans | `00:00:02.5000000` → `2.50 s` |
 | One React commit per ingest request | Batches now coalesce on a 120ms flush |
-| Search filtered synchronously per keystroke | Deferred, with a per-item cached haystack and one compiled matcher per category filter |
+| Search filtered synchronously per keystroke | Deferred, with a per-item cached index and one compiled matcher per category filter |
 | Detail pane animated the list's width | 364ms freeze on first row click, now 13ms |
 | First paint parsed the whole buffer | 8.1MB of JSON; now the most recent 2000 items |
 | `itemsAccepted` over-reported | Counted received rather than kept, including dropped Metrics |
@@ -483,4 +483,3 @@ Measured at ~9k items, before → after:
 | Row click → detail painted | 364 ms | 13 ms |
 | Scroll frame p95 | 30 ms | 17 ms |
 | DOM nodes | 70,073 | 392 |
-| JS heap | 62 MB | 13 MB |

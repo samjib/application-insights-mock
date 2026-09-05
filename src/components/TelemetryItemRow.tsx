@@ -1,6 +1,7 @@
 'use client';
 
 import { TelemetryItem, ColumnDef, extractColumnValue } from '@/lib/types';
+import { highlightRanges } from '@/lib/search';
 
 // Rows are a fixed height so the list can be virtualised without measuring.
 export const ROW_HEIGHT = 32;
@@ -86,12 +87,34 @@ function formatTime(iso: string): string {
   }
 }
 
+/** Wraps the parts of `text` matched by the active search in a <mark>. */
+function withHighlights(text: string, terms: string[]) {
+  const ranges = highlightRanges(text, terms);
+  if (!ranges.length) return text;
+
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach(([start, end], i) => {
+    if (start > cursor) out.push(text.slice(cursor, start));
+    out.push(
+      <mark key={i} className="bg-yellow-300/70 dark:bg-yellow-500/40 text-inherit rounded-sm">
+        {text.slice(start, end)}
+      </mark>,
+    );
+    cursor = end;
+  });
+  if (cursor < text.length) out.push(text.slice(cursor));
+  return out;
+}
+
 interface TelemetryItemRowProps {
   item: TelemetryItem;
   isSelected: boolean;
   onClick: (item: TelemetryItem) => void;
   extraColumns: ColumnDef[];
   gridTemplate: string;
+  highlightTerms: string[];
+  showOperation: boolean;
 }
 
 export default function TelemetryItemRow({
@@ -100,6 +123,8 @@ export default function TelemetryItemRow({
   onClick,
   extraColumns,
   gridTemplate,
+  highlightTerms,
+  showOperation,
 }: TelemetryItemRowProps) {
   const severity = getSeverity(item);
   const success = getSuccess(item);
@@ -141,7 +166,7 @@ export default function TelemetryItemRow({
       </span>
 
       <span className="truncate text-gray-700 dark:text-gray-300" title={item.summary}>
-        {item.summary}
+        {withHighlights(item.summary, highlightTerms)}
       </span>
 
       {extraColumns.map((col) => {
@@ -152,14 +177,16 @@ export default function TelemetryItemRow({
             className="text-xs text-gray-400 dark:text-gray-500 truncate font-mono"
             title={`${col.label}: ${val ?? '—'}`}
           >
-            {val ?? '—'}
+            {val === undefined ? '—' : withHighlights(val, highlightTerms)}
           </span>
         );
       })}
 
-      <span className="text-xs text-gray-400 dark:text-gray-500 truncate" title={operation}>
-        {operation ?? ''}
-      </span>
+      {showOperation && (
+        <span className="text-xs text-gray-400 dark:text-gray-500 truncate" title={operation}>
+          {operation ? withHighlights(operation, highlightTerms) : ''}
+        </span>
+      )}
     </div>
   );
 }

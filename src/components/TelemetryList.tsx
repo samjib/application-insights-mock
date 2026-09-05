@@ -8,27 +8,32 @@ import TelemetryItemRow, { ROW_HEIGHT } from './TelemetryItemRow';
 // blank space before the next frame lands.
 const OVERSCAN = 10;
 
+// Below this list width the trailing columns crowd out the summary, which is the
+// column that actually matters, so they are dropped instead of squeezed.
+const COMPACT_WIDTH = 720;
+
 interface TelemetryListProps {
   items: TelemetryItem[];
   selectedItem: TelemetryItem | null;
   onSelect: (item: TelemetryItem) => void;
   extraColumns: ColumnDef[];
+  highlightTerms: string[];
   connectionString: string;
   copied: boolean;
   onCopyConnectionString: () => void;
 }
 
-function buildGridTemplate(extraColumns: ColumnDef[]): string {
+function buildGridTemplate(extraColumns: ColumnDef[], compact: boolean): string {
   // Header and rows share these tracks, so every column lines up regardless of
   // which optional cells a given item happens to populate.
   return [
-    '10rem', // time
+    compact ? '5.5rem' : '10rem', // time
     '3rem', // type badge
     '1.75rem', // severity
     '1rem', // success marker
-    'minmax(0, 1fr)', // summary
-    ...extraColumns.map(() => '8rem'),
-    '12.5rem', // operation name
+    'minmax(0, 1fr)', // summary — never yields its share to a trailing column
+    ...extraColumns.map(() => (compact ? '5rem' : '8rem')),
+    ...(compact ? [] : ['12.5rem']), // operation name
   ].join(' ');
 }
 
@@ -37,6 +42,7 @@ export default function TelemetryList({
   selectedItem,
   onSelect,
   extraColumns,
+  highlightTerms,
   connectionString,
   copied,
   onCopyConnectionString,
@@ -44,12 +50,18 @@ export default function TelemetryList({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  // Items that arrived above the current scroll position since the user last
+  // looked at the top of the list.
+  const [unseenCount, setUnseenCount] = useState(0);
   const rafRef = useRef<number | null>(null);
 
   // Track the head of the list so prepended items can be compensated for.
   const prevHeadRef = useRef<{ id: number; length: number } | null>(null);
 
-  const gridTemplate = buildGridTemplate(extraColumns);
+  // Width 0 means "not measured yet"; assume roomy so the first paint is not compact.
+  const compact = viewportWidth > 0 && viewportWidth < COMPACT_WIDTH;
+  const gridTemplate = buildGridTemplate(extraColumns, compact);
   // The scroll container is unmounted while the empty state is showing, so the
   // listeners below have to be re-attached when items first arrive.
   const isEmpty = items.length === 0;
@@ -76,9 +88,11 @@ export default function TelemetryList({
 
     const observer = new ResizeObserver(([entry]) => {
       setViewportHeight(entry.contentRect.height);
+      setViewportWidth(entry.contentRect.width);
     });
     observer.observe(el);
     setViewportHeight(el.clientHeight);
+    setViewportWidth(el.clientWidth);
 
     return () => {
       el.removeEventListener('scroll', onScroll);
@@ -103,8 +117,14 @@ export default function TelemetryList({
     if (inserted > 0) {
       el.scrollTop += inserted * ROW_HEIGHT;
       setScrollTop(el.scrollTop);
+      setUnseenCount((n) => n + inserted);
     }
   }, [items]);
+
+  // Back at the top means everything above has been seen.
+  useEffect(() => {
+    if (scrollTop === 0 && unseenCount !== 0) setUnseenCount(0);
+  }, [scrollTop, unseenCount]);
 
   // Keep the selected row on screen when it is moved by the keyboard.
   useEffect(() => {
@@ -131,6 +151,7 @@ export default function TelemetryList({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTo({ top: 0, behavior: 'smooth' });
+    setUnseenCount(0);
   };
 
   if (items.length === 0) {
@@ -177,7 +198,7 @@ export default function TelemetryList({
             {col.label}
           </span>
         ))}
-        <span className="truncate">Operation</span>
+        {!compact && <span className="truncate">Operation</span>}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -191,11 +212,23 @@ export default function TelemetryList({
                 onClick={onSelect}
                 extraColumns={extraColumns}
                 gridTemplate={gridTemplate}
+                highlightTerms={highlightTerms}
+                showOperation={!compact}
               />
             ))}
           </div>
         </div>
       </div>
+
+      {unseenCount > 0 && (
+        <button
+          onClick={scrollToTop}
+          className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-blue-600 text-white text-xs font-medium shadow-lg hover:bg-blue-500 transition-colors cursor-pointer tabular-nums"
+          title="Jump to the newest telemetry"
+        >
+          {unseenCount.toLocaleString()} new ↑
+        </button>
+      )}
 
       {scrollTop > 200 && (
         <button

@@ -16,6 +16,21 @@ const TYPES: TelemetryType[] = [
   'PageViewPerf',
 ];
 
+const SEARCH_SYNTAX_ROWS: [string, string][] = [
+  ['orders 500', 'both terms must match'],
+  ['"order placed"', 'quoted phrase'],
+  ['-healthcheck', 'exclude matches'],
+  ['url:/api/orders', 'scope to one field'],
+  ['-code:200', 'scope and exclude'],
+  ['Tenant:acme', 'any property or tag key'],
+];
+
+const SEARCH_SYNTAX_HINT = [
+  'Search across every field of an item.',
+  '',
+  ...SEARCH_SYNTAX_ROWS.map(([example, meaning]) => `${example}  —  ${meaning}`),
+].join('\n');
+
 const TYPE_BADGE: Record<string, string> = {
   Request: 'bg-emerald-500',
   Dependency: 'bg-blue-500',
@@ -249,9 +264,12 @@ export default function FilterBar({
         <input
           ref={searchInputRef}
           type="text"
-          placeholder="Search… (press / to focus)"
+          placeholder="Search…  ( / to focus · -exclude · field:value )"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
+          title={SEARCH_SYNTAX_HINT}
+          spellCheck={false}
+          autoComplete="off"
           className="w-full px-3 py-1.5 pr-8 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {searchQuery && (
@@ -397,6 +415,26 @@ export default function FilterBar({
               </div>
               <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1 px-3 py-1 text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
                 Shortcuts: <kbd>/</kbd> search · <kbd>j</kbd>/<kbd>k</kbd> nav · <kbd>Space</kbd> pause · <kbd>Esc</kbd> close
+              </div>
+              <div className="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1.5 px-3 pb-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">
+                  Search syntax
+                </div>
+                <dl className="space-y-0.5 text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                  {SEARCH_SYNTAX_ROWS.map(([example, meaning]) => (
+                    <div key={example} className="flex gap-1.5">
+                      <dt className="shrink-0 font-mono text-gray-500 dark:text-gray-400 w-28 truncate">
+                        {example}
+                      </dt>
+                      <dd className="flex-1">{meaning}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="mt-1.5 text-[10px] text-gray-400 dark:text-gray-500 leading-snug">
+                  Fields: <span className="font-mono">url data target code name message stack
+                  problem duration severity success category op role type</span>, plus any custom
+                  property or tag key.
+                </div>
               </div>
             </div>
           )}
