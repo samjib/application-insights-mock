@@ -83,20 +83,23 @@ function Tile({
 
   return (
     <div
-      className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 py-2"
+      className="summary-tile rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 py-2 min-w-0"
       style={{ ['--chart-surface' as string]: 'var(--color-gray-900, #111827)' }}
     >
-      <div className="text-[11px] text-gray-500 dark:text-gray-400">{label}</div>
-      <div className="flex items-end justify-between gap-2">
-        {/* Proportional figures: tabular-nums makes a standalone number look loose. */}
-        <div className="text-xl font-semibold text-gray-900 dark:text-gray-100 leading-tight">
+      <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate">{label}</div>
+      <div className="flex items-end justify-between gap-2 min-w-0">
+        {/* Proportional figures: tabular-nums makes a standalone number look loose.
+            The value never shrinks — a truncated number reads as a wrong number. */}
+        <div className="text-xl font-semibold text-gray-900 dark:text-gray-100 leading-tight shrink-0">
           {value}
         </div>
         {trend && trend.length > 1 && (
-          <Sparkline values={trend} color={trendColor ?? SERIES.Other} width={64} height={22} label={`${label} over time`} />
+          <span className="min-w-0 overflow-hidden flex justify-end">
+            <Sparkline values={trend} color={trendColor ?? SERIES.Other} width={64} height={22} label={`${label} over time`} />
+          </span>
         )}
       </div>
-      {secondary && <div className={`text-[11px] ${secondaryTone}`}>{secondary}</div>}
+      {secondary && <div className={`text-[11px] truncate ${secondaryTone}`}>{secondary}</div>}
     </div>
   );
 }
@@ -104,6 +107,10 @@ function Tile({
 const TH = 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 whitespace-nowrap';
 const TD = 'px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap';
 const TD_NUM = `${TD} text-right tabular-nums`;
+const TH_NUM = `${TH} text-right`;
+const W_COUNT = 'w-16';
+const W_RATE = 'w-14';
+const W_TIME = 'w-20';
 const ROW = 'border-t border-gray-100 dark:border-gray-800 hover:bg-blue-50/60 dark:hover:bg-blue-950/40 cursor-pointer';
 
 function TopTable({
@@ -116,12 +123,12 @@ function TopTable({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-hidden">
-      <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+    <div className="summary-card rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 overflow-hidden">
+      <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 truncate">
         {title}
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className="w-full table-fixed">
           <thead>
             <tr>{headers}</tr>
           </thead>
@@ -229,12 +236,30 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
   const isTraces = view.id === 'traces';
   const isAll = view.types === null;
 
+  // Views without a breakdown must not reserve a column for one.
+  const hasBreakdown =
+    ((isRequests || isAll) && insights.requestsByOperation.length > 0) ||
+    (isDependencies && insights.dependenciesByTarget.length > 0) ||
+    (isExceptions && insights.exceptionsByProblem.length > 0) ||
+    (isTraces && insights.tracesByCategory.length > 0);
+
   return (
-    <div className="shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950">
+    <div className="summary-panel shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-950">
       {header}
-      <div className="px-3 pb-3 grid gap-2 lg:grid-cols-2 2xl:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_minmax(0,26rem)] items-start">
-        {/* Tiles: only the measures that mean something for what is on screen. */}
-        <div className="grid gap-2 grid-cols-2">
+      <div
+        className={`summary-grid px-3 pb-3 grid gap-2 items-start ${
+          hasBreakdown
+            // Two columns until there is room for three: at `lg` the breakdown
+            // shares the left track with the tiles, so that track is wider.
+            ? 'lg:grid-cols-[minmax(0,21rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,16rem)_minmax(0,1fr)_minmax(0,26rem)]'
+            : 'lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]'
+        }`}
+      >
+        {/* Tiles: only the measures that mean something for what is on screen.
+            Side by side only while the panel is one full-width column; from `lg`
+            the tiles sit in a 16rem track, where two across left ~120px each and
+            truncated the value to "1…". */}
+        <div className="grid gap-2 grid-cols-2 lg:grid-cols-1 min-w-0">
           {isAll && (
             <>
               <Tile label="Items" value={formatCount(totals.items)} trend={totalTrend} trendColor={SERIES.Other} />
@@ -317,7 +342,11 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
         </div>
 
         {/* Charts: at most two, chosen for what this view is about. */}
-        <div className="grid gap-2 md:grid-cols-2 min-w-0">
+        <div
+          className={`grid gap-2 md:grid-cols-2 min-w-0 ${
+            hasBreakdown ? 'lg:row-span-2 xl:row-span-1' : ''
+          }`}
+        >
           {isRequests ? (
             <>
               <ChartCard
@@ -389,23 +418,25 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
           )}
         </div>
 
-        {/* One breakdown, capped — the list below carries the individual items. */}
-        <div className="min-w-0">
+        {/* One breakdown, capped — the list below carries the individual items.
+            At two columns it sits under the tiles, in the row the charts span. */}
+        {hasBreakdown && (
+        <div className="min-w-0 hidden lg:block">
           {(isRequests || isAll) && insights.requestsByOperation.length > 0 && (
             <TopTable
               title={`Slowest ${isAll ? 'request ' : ''}operations · top ${Math.min(TOP_ROWS, insights.requestsByOperation.length)}`}
               headers={
                 <>
                   <th className={`${TH} text-left`}>Operation</th>
-                  <th className={`${TH} text-right`}>Count</th>
-                  <th className={`${TH} text-right`}>Failed</th>
-                  <th className={`${TH} text-right`}>p95</th>
+                  <th className={`${TH_NUM} ${W_COUNT}`}>Count</th>
+                  <th className={`${TH_NUM} ${W_RATE}`}>Failed</th>
+                  <th className={`${TH_NUM} ${W_TIME}`}>p95</th>
                 </>
               }
             >
               {insights.requestsByOperation.slice(0, TOP_ROWS).map((row) => (
                 <tr key={row.key} className={ROW} onClick={() => onDrillDown(scopedQuery('op', row.key))}>
-                  <td className={`${TD} max-w-52 truncate`} title={row.key}>{row.key}</td>
+                  <td className={`${TD} truncate`} title={row.key}>{row.key}</td>
                   <DurationCells row={row} />
                 </tr>
               ))}
@@ -418,15 +449,15 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
               headers={
                 <>
                   <th className={`${TH} text-left`}>Target</th>
-                  <th className={`${TH} text-right`}>Count</th>
-                  <th className={`${TH} text-right`}>Failed</th>
-                  <th className={`${TH} text-right`}>p95</th>
+                  <th className={`${TH_NUM} ${W_COUNT}`}>Count</th>
+                  <th className={`${TH_NUM} ${W_RATE}`}>Failed</th>
+                  <th className={`${TH_NUM} ${W_TIME}`}>p95</th>
                 </>
               }
             >
               {insights.dependenciesByTarget.slice(0, TOP_ROWS).map((row) => (
                 <tr key={row.key} className={ROW} onClick={() => onDrillDown(scopedQuery('target', row.key))}>
-                  <td className={`${TD} max-w-52 truncate`} title={row.key}>
+                  <td className={`${TD} truncate`} title={row.key}>
                     {row.key}
                     {row.detail && <span className="ml-1.5 text-gray-500 dark:text-gray-500">{row.detail}</span>}
                   </td>
@@ -442,7 +473,7 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
               headers={
                 <>
                   <th className={`${TH} text-left`}>Problem</th>
-                  <th className={`${TH} text-right`}>Count</th>
+                  <th className={`${TH_NUM} ${W_COUNT}`}>Count</th>
                 </>
               }
             >
@@ -452,7 +483,7 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
                   className={ROW}
                   onClick={() => onDrillDown(scopedQuery('exception', row.typeName))}
                 >
-                  <td className={`${TD} max-w-72 truncate text-red-600 dark:text-red-400`} title={`${row.key} — ${row.sampleMessage}`}>
+                  <td className={`${TD} truncate text-red-600 dark:text-red-400`} title={`${row.key} — ${row.sampleMessage}`}>
                     {row.key}
                   </td>
                   <td className={TD_NUM}>{row.count.toLocaleString('en-GB')}</td>
@@ -467,9 +498,9 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
               headers={
                 <>
                   <th className={`${TH} text-left`}>Category</th>
-                  <th className={`${TH} text-right`}>Total</th>
-                  <th className={`${TH} text-right`}>Warn</th>
-                  <th className={`${TH} text-right`}>Error</th>
+                  <th className={`${TH_NUM} ${W_COUNT}`}>Total</th>
+                  <th className={`${TH_NUM} ${W_RATE}`}>Warn</th>
+                  <th className={`${TH_NUM} ${W_RATE}`}>Error</th>
                 </>
               }
             >
@@ -479,7 +510,7 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
                   className={ROW}
                   onClick={() => onDrillDown(scopedQuery('cat', row.category))}
                 >
-                  <td className={`${TD} max-w-52 truncate font-mono`} title={row.category}>{row.category}</td>
+                  <td className={`${TD} truncate font-mono`} title={row.category}>{row.category}</td>
                   <td className={TD_NUM}>{row.total.toLocaleString('en-GB')}</td>
                   <td className={TD_NUM}>
                     {row.bySeverity[2] > 0 ? (
@@ -502,6 +533,7 @@ export default function SummaryPanel({ items, view, collapsed, onToggle, onDrill
             </TopTable>
           )}
         </div>
+        )}
       </div>
     </div>
   );

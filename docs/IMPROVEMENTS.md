@@ -213,6 +213,10 @@ At 390px wide, `document.scrollWidth` is 418 against a 390px window, and `<body>
 is `overflow-hidden`, so the overflow is unreachable. The filter bar wraps onto
 three rows and eats a third of the screen, and the search input is cut off.
 
+The *list* no longer contributes to this — its tracks are `minmax(0, …)` and it
+drops the operation column based on how many columns are actually on, so it
+cannot outgrow its container. What remains is the filter bar and the header.
+
 **Fix:** below a breakpoint, collapse the filter bar behind a menu, shorten
 timestamps (the Time column claims 160px for millisecond precision), and make the
 detail pane a full-screen overlay rather than a half-width sibling.
@@ -463,8 +467,11 @@ as on hover, and every charted value is also in a table, so nothing is gated
 behind a pointer.
 
 Measured on the Requests view with its summary live, recomputing on each 120 ms
-batch while streaming: frame p95 19.1 ms, zero long tasks; 17.0 ms with the
-summary collapsed.
+batch while streaming: frame p95 16.9 ms, zero long tasks.
+
+Sizing is audited rather than eyeballed: six views × six viewport widths
+(1920 → 820) check for horizontal overflow, clipped text, truncated stat-tile
+values and tables forced to scroll inside their own card. All clear.
 
 ### Views and columns
 

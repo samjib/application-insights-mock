@@ -8,9 +8,15 @@ import TelemetryItemRow, { ROW_HEIGHT } from './TelemetryItemRow';
 // blank space before the next frame lands.
 const OVERSCAN = 10;
 
-// Below this list width the trailing columns crowd out the summary, which is the
-// column that actually matters, so they are dropped instead of squeezed.
-const COMPACT_WIDTH = 720;
+// Width the summary column is never allowed to drop below — it is the column
+// that actually matters, so everything else yields to it first.
+const MIN_SUMMARY_WIDTH = 160;
+
+// Roughly what each trailing column asks for, used to decide when the operation
+// column has to go. A fixed threshold was wrong: four extra columns need 1,062px
+// before the summary gets a single pixel, so the grid overflowed its container
+// at ordinary laptop widths.
+const COLUMN_BUDGET = { base: 300, operation: 208, extra: 136 };
 
 interface TelemetryListProps {
   items: TelemetryItem[];
@@ -28,17 +34,24 @@ interface TelemetryListProps {
   onClearFilters: () => void;
 }
 
-function buildGridTemplate(extraColumns: ColumnDef[], compact: boolean): string {
-  // Header and rows share these tracks, so every column lines up regardless of
-  // which optional cells a given item happens to populate.
+/**
+ * Header and rows share these tracks, so every column lines up regardless of
+ * which optional cells a given item happens to populate.
+ *
+ * Every optional track is `minmax(0, …)`: it takes its preferred width when
+ * there is room and compresses when there is not, so the grid can never grow
+ * wider than its container. Only the type, severity and marker columns are
+ * fixed, and together they come to under 100px.
+ */
+function buildGridTemplate(extraColumns: ColumnDef[], compact: boolean, showOperation: boolean): string {
   return [
-    compact ? '5.5rem' : '10rem', // time
+    compact ? 'minmax(0, 5.5rem)' : 'minmax(0, 10rem)', // time
     '3rem', // type badge
     '1.75rem', // severity
     '1rem', // success marker
-    'minmax(0, 1fr)', // summary — never yields its share to a trailing column
-    ...extraColumns.map(() => (compact ? '5rem' : '8rem')),
-    ...(compact ? [] : ['12.5rem']), // operation name
+    `minmax(${MIN_SUMMARY_WIDTH}px, 1fr)`, // summary
+    ...extraColumns.map(() => (compact ? 'minmax(0, 5rem)' : 'minmax(0, 8rem)')),
+    ...(showOperation ? ['minmax(0, 12.5rem)'] : []), // operation name
   ].join(' ');
 }
 
@@ -68,8 +81,12 @@ export default function TelemetryList({
   const prevHeadRef = useRef<{ id: number; length: number } | null>(null);
 
   // Width 0 means "not measured yet"; assume roomy so the first paint is not compact.
-  const compact = viewportWidth > 0 && viewportWidth < COMPACT_WIDTH;
-  const gridTemplate = buildGridTemplate(extraColumns, compact);
+  const measured = viewportWidth > 0;
+  const budget = COLUMN_BUDGET.base + extraColumns.length * COLUMN_BUDGET.extra + MIN_SUMMARY_WIDTH;
+  // The operation column is the first to go, then the time column tightens.
+  const showOperation = !measured || viewportWidth >= budget + COLUMN_BUDGET.operation;
+  const compact = measured && viewportWidth < budget;
+  const gridTemplate = buildGridTemplate(extraColumns, compact, showOperation);
   // The scroll container is unmounted while the empty state is showing, so the
   // listeners below have to be re-attached when items first arrive.
   const isEmpty = items.length === 0;
@@ -234,7 +251,7 @@ export default function TelemetryList({
             {col.label}
           </span>
         ))}
-        {!compact && <span className="truncate">Operation</span>}
+        {showOperation && <span className="truncate">Operation</span>}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -249,7 +266,7 @@ export default function TelemetryList({
                 extraColumns={extraColumns}
                 gridTemplate={gridTemplate}
                 highlightTerms={highlightTerms}
-                showOperation={!compact}
+                showOperation={showOperation}
               />
             ))}
           </div>
