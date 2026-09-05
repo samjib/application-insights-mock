@@ -21,6 +21,11 @@ interface TelemetryListProps {
   connectionString: string;
   copied: boolean;
   onCopyConnectionString: () => void;
+  /** True when the buffer holds anything at all, filters aside. */
+  hasCapturedItems: boolean;
+  /** True when a search, category, type or operation filter is narrowing the list. */
+  filtersActive: boolean;
+  onClearFilters: () => void;
 }
 
 function buildGridTemplate(extraColumns: ColumnDef[], compact: boolean): string {
@@ -46,6 +51,9 @@ export default function TelemetryList({
   connectionString,
   copied,
   onCopyConnectionString,
+  hasCapturedItems,
+  filtersActive,
+  onClearFilters,
 }: TelemetryListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -153,6 +161,34 @@ export default function TelemetryList({
     el.scrollTo({ top: 0, behavior: 'smooth' });
     setUnseenCount(0);
   };
+
+  // Nothing to show has two very different causes, and conflating them sent people
+  // to check their connection string when the real answer was an active filter.
+  if (items.length === 0 && hasCapturedItems) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-600 p-6">
+        <div className="text-center max-w-md">
+          <div className="text-4xl mb-3">🔍</div>
+          <div className="text-lg font-medium text-gray-600 dark:text-gray-300">
+            Nothing matches here
+          </div>
+          <div className="text-sm mt-2 text-gray-500 dark:text-gray-400">
+            {filtersActive
+              ? 'Telemetry is being captured, but nothing in this view matches the current filters.'
+              : 'Telemetry is being captured, but none of it is of this kind yet.'}
+          </div>
+          {filtersActive && (
+            <button
+              onClick={onClearFilters}
+              className="mt-3 px-3 py-1.5 rounded text-xs font-medium bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900 transition-colors cursor-pointer"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (items.length === 0) {
     return (

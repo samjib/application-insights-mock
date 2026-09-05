@@ -67,6 +67,13 @@ interface FilterBarProps {
   availableColumns: ColumnDef[];
   selectedColumnKeys: string[];
   onColumnToggle: (key: string) => void;
+  onColumnReset: () => void;
+  /** False once the user has picked columns for the current view. */
+  columnsAreDefault: boolean;
+  /** Hidden when the active view already scopes the telemetry types. */
+  showTypeFilter: boolean;
+  showColumnPicker: boolean;
+  itemNoun?: string;
 }
 
 export default function FilterBar({
@@ -93,6 +100,11 @@ export default function FilterBar({
   availableColumns,
   selectedColumnKeys,
   onColumnToggle,
+  onColumnReset,
+  columnsAreDefault,
+  showTypeFilter,
+  showColumnPicker,
+  itemNoun,
 }: FilterBarProps) {
   const [catInput, setCatInput] = useState('');
   const [showCatDropdown, setShowCatDropdown] = useState(false);
@@ -182,6 +194,7 @@ export default function FilterBar({
         )}
       </button>
 
+      {showTypeFilter && (
       <div ref={typesDropdownRef} className="relative shrink-0">
         <button
           onClick={() => setShowTypesDropdown((v) => !v)}
@@ -259,6 +272,7 @@ export default function FilterBar({
           </div>
         )}
       </div>
+      )}
 
       <div className="relative flex-1 min-w-0 max-w-sm">
         <input
@@ -364,15 +378,25 @@ export default function FilterBar({
       )}
 
       <div className="flex items-center gap-2 shrink-0 ml-auto">
-        <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums whitespace-nowrap" title="Filtered / total">
-          {itemCount === totalItemCount ? itemCount : `${itemCount} of ${totalItemCount}`}
+        <span
+          className="text-xs text-gray-500 dark:text-gray-400 tabular-nums whitespace-nowrap"
+          title={`${itemCount.toLocaleString()} shown of ${totalItemCount.toLocaleString()} captured`}
+        >
+          {itemCount === totalItemCount
+            ? itemCount.toLocaleString()
+            : `${itemCount.toLocaleString()} of ${totalItemCount.toLocaleString()}`}
+          {itemNoun && itemCount === 1 ? ` ${itemNoun}` : ''}
         </span>
 
-        <ColumnPicker
-          availableColumns={availableColumns}
-          selectedKeys={selectedColumnKeys}
-          onToggle={onColumnToggle}
-        />
+        {showColumnPicker && (
+          <ColumnPicker
+            availableColumns={availableColumns}
+            selectedKeys={selectedColumnKeys}
+            onToggle={onColumnToggle}
+            onReset={onColumnReset}
+            isDefault={columnsAreDefault}
+          />
+        )}
 
         <button
           onClick={onExport}

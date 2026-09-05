@@ -1,4 +1,5 @@
-import { TelemetryType } from './types';
+import { DEFAULT_VIEW_ID, isValidViewId } from './views';
+import type { TelemetryType } from './types';
 
 /**
  * The parts of the dashboard view worth keeping: what you are looking at, not
@@ -9,19 +10,26 @@ import { TelemetryType } from './types';
  * reloading into a paused dashboard is a bug, not a feature.
  */
 export interface ViewState {
+  /** Which page is open — see `views.ts`. */
+  view: string;
   search: string;
   hiddenTypes: TelemetryType[];
   categoryFilters: string[];
   operationFilter: string | null;
-  columnKeys: string[];
+  /**
+   * Column choices per view. A view absent from this map falls back to its own
+   * defaults, so a user who never touches the picker gets columns suited to
+   * whatever they are looking at.
+   */
+  columnsByView: Record<string, string[]>;
   /** Fraction of the width given to the list when the detail pane is open. */
   splitFraction: number | null;
 }
 
 const STORAGE_KEY = 'mock-ai-view';
 
-// Superseded by `columnKeys` on ViewState; still read once so an existing
-// column selection survives the upgrade.
+// Two earlier shapes for the column selection, both read once so an existing
+// choice survives the upgrade rather than silently resetting.
 const LEGACY_COLUMNS_KEY = 'mock-ai-columns';
 
 export const MIN_SPLIT = 0.25;
@@ -29,11 +37,12 @@ export const MAX_SPLIT = 0.8;
 export const DEFAULT_SPLIT = 0.6;
 
 export const EMPTY_VIEW: ViewState = {
+  view: DEFAULT_VIEW_ID,
   search: '',
   hiddenTypes: [],
   categoryFilters: [],
   operationFilter: null,
-  columnKeys: [],
+  columnsByView: {},
   splitFraction: null,
 };
 
@@ -54,24 +63,31 @@ export function clampSplit(fraction: number): number {
 
 // --- URL ---
 
-export function toSearchParams(view: ViewState): URLSearchParams {
+export function toSearchParams(state: ViewState): URLSearchParams {
   const params = new URLSearchParams();
-  if (view.search.trim()) params.set('q', view.search);
-  if (view.hiddenTypes.length) params.set('hide', view.hiddenTypes.join(','));
-  if (view.categoryFilters.length) params.set('cat', view.categoryFilters.join(','));
-  if (view.operationFilter) params.set('op', view.operationFilter);
-  if (view.columnKeys.length) params.set('cols', view.columnKeys.join(','));
-  if (view.splitFraction !== null) params.set('split', view.splitFraction.toFixed(3));
+  if (state.view !== DEFAULT_VIEW_ID) params.set('view', state.view);
+  if (state.search.trim()) params.set('q', state.search);
+  if (state.hiddenTypes.length) params.set('hide', state.hiddenTypes.join(','));
+  if (state.categoryFilters.length) params.set('cat', state.categoryFilters.join(','));
+  if (state.operationFilter) params.set('op', state.operationFilter);
+  // Only the active view's columns travel in the URL — that is what the link shows.
+  const active = state.columnsByView[state.view];
+  if (active) params.set('cols', active.join(','));
+  if (state.splitFraction !== null) params.set('split', state.splitFraction.toFixed(3));
   return params;
 }
 
 function fromSearchParams(params: URLSearchParams): Partial<ViewState> {
   const out: Partial<ViewState> = {};
+  const view = params.get('view');
+  if (isValidViewId(view)) out.view = view;
   if (params.has('q')) out.search = params.get('q') ?? '';
   if (params.has('hide')) out.hiddenTypes = splitList(params.get('hide')) as TelemetryType[];
   if (params.has('cat')) out.categoryFilters = splitList(params.get('cat'));
   if (params.has('op')) out.operationFilter = params.get('op') || null;
-  if (params.has('cols')) out.columnKeys = splitList(params.get('cols'));
+  if (params.has('cols')) {
+    out.columnsByView = { [out.view ?? DEFAULT_VIEW_ID]: splitList(params.get('cols')) };
+  }
   if (params.has('split')) {
     const n = Number(params.get('split'));
     if (Number.isFinite(n)) out.splitFraction = clampSplit(n);
@@ -81,6 +97,15 @@ function fromSearchParams(params: URLSearchParams): Partial<ViewState> {
 
 // --- localStorage ---
 
+function columnMap(value: unknown): Record<string, string[]> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (Array.isArray(v)) out[k] = stringArray(v);
+  }
+  return out;
+}
+
 function fromStorage(): Partial<ViewState> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -88,7 +113,8 @@ function fromStorage(): Partial<ViewState> {
       const legacy = localStorage.getItem(LEGACY_COLUMNS_KEY);
       if (!legacy) return {};
       const parsed: unknown = JSON.parse(legacy);
-      return { columnKeys: stringArray(parsed) };
+      const keys = stringArray(parsed);
+      return keys.length ? { columnsByView: { [DEFAULT_VIEW_ID]: keys } } : {};
     }
 
     const parsed: unknown = JSON.parse(raw);
@@ -100,15 +126,22 @@ function fromStorage(): Partial<ViewState> {
     }
 
     const v = parsed as Record<string, unknown>;
-    const out: Partial<ViewState> = {
+    // `columnKeys` is the previous single-list shape; it becomes the live feed's.
+    const legacyKeys = stringArray(v.columnKeys);
+    const columnsByView = columnMap(v.columnsByView);
+    if (legacyKeys.length && !(DEFAULT_VIEW_ID in columnsByView)) {
+      columnsByView[DEFAULT_VIEW_ID] = legacyKeys;
+    }
+
+    return {
+      view: isValidViewId(v.view) ? v.view : DEFAULT_VIEW_ID,
       search: typeof v.search === 'string' ? v.search : '',
       hiddenTypes: stringArray(v.hiddenTypes) as TelemetryType[],
       categoryFilters: stringArray(v.categoryFilters),
       operationFilter: typeof v.operationFilter === 'string' ? v.operationFilter : null,
-      columnKeys: stringArray(v.columnKeys),
+      columnsByView,
       splitFraction: typeof v.splitFraction === 'number' ? clampSplit(v.splitFraction) : null,
     };
-    return out;
   } catch {
     return {};
   }

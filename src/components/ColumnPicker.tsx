@@ -7,6 +7,10 @@ interface ColumnPickerProps {
   availableColumns: ColumnDef[];
   selectedKeys: string[];
   onToggle: (key: string) => void;
+  /** Drops this view's column choice, restoring the view's defaults. */
+  onReset: () => void;
+  /** True while the view is still showing its own defaults. */
+  isDefault: boolean;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -18,7 +22,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const CATEGORY_ORDER: ColumnDef['category'][] = ['baseData', 'tags', 'properties', 'measurements'];
 
-export default function ColumnPicker({ availableColumns, selectedKeys, onToggle }: ColumnPickerProps) {
+export default function ColumnPicker({ availableColumns, selectedKeys, onToggle, onReset, isDefault }: ColumnPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -76,6 +80,19 @@ export default function ColumnPicker({ availableColumns, selectedKeys, onToggle 
       {open && (
         <div className="absolute right-0 top-full mt-1 z-50 w-80 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg flex flex-col max-h-96">
           <div className="p-2 border-b border-gray-200 dark:border-gray-700 shrink-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                Columns
+              </span>
+              <button
+                onClick={onReset}
+                disabled={isDefault}
+                className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline cursor-pointer disabled:opacity-40 disabled:cursor-default disabled:no-underline"
+                title={isDefault ? 'Already showing this view\u2019s defaults' : 'Restore this view\u2019s default columns'}
+              >
+                {isDefault ? 'Default columns' : 'Reset to defaults'}
+              </button>
+            </div>
             <input
               ref={inputRef}
               type="text"

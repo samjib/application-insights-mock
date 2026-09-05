@@ -186,27 +186,28 @@ const TIMESPAN_RE = /^(-)?(?:(\d+)[.:])?(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)$/;
  * millisecond count, both of which are unreadable at a glance in a live list.
  * Anything unrecognised is passed through untouched.
  */
+export function parseDurationMs(raw: string | number | undefined | null): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
+
+  const m = TIMESPAN_RE.exec(raw.trim());
+  if (!m) {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  const [, sign, days, hours, minutes, seconds] = m;
+  const ms =
+    ((Number(days ?? 0) * 24 + Number(hours)) * 3600 + Number(minutes) * 60 + Number(seconds)) * 1000;
+  return sign ? -ms : ms;
+}
+
 export function formatDuration(raw: string | number | undefined | null): string | undefined {
   if (raw === undefined || raw === null || raw === '') return undefined;
 
-  let ms: number;
-  if (typeof raw === 'number') {
-    ms = raw;
-  } else {
-    const m = TIMESPAN_RE.exec(raw.trim());
-    if (!m) {
-      const n = Number(raw);
-      if (!Number.isFinite(n)) return raw;
-      ms = n;
-    } else {
-      const [, sign, days, hours, minutes, seconds] = m;
-      ms =
-        ((Number(days ?? 0) * 24 + Number(hours)) * 3600 + Number(minutes) * 60 + Number(seconds)) * 1000;
-      if (sign) ms = -ms;
-    }
-  }
-
-  if (!Number.isFinite(ms)) return String(raw);
+  const ms = parseDurationMs(raw);
+  // Unparseable input is shown as it arrived rather than silently dropped.
+  if (ms === undefined) return String(raw);
 
   const abs = Math.abs(ms);
   const sign = ms < 0 ? '-' : '';

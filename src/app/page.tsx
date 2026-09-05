@@ -19,7 +19,10 @@ import {
   saveViewState,
   syncUrl,
 } from '@/lib/view-state';
+import { INSIGHTS_VIEW_ID, columnsForView, getView } from '@/lib/views';
 import FilterBar from '@/components/FilterBar';
+import InsightsPanel from '@/components/InsightsPanel';
+import ViewTabs from '@/components/ViewTabs';
 import Splitter from '@/components/Splitter';
 import TelemetryList from '@/components/TelemetryList';
 import TelemetryDetail from '@/components/TelemetryDetail';
@@ -144,6 +147,17 @@ export default function Home() {
 
   const hiddenTypes = useMemo(() => new Set(view.hiddenTypes), [view.hiddenTypes]);
   const splitFraction = view.splitFraction ?? DEFAULT_SPLIT;
+
+  const activeView = getView(view.view);
+  const showingInsights = activeView.id === INSIGHTS_VIEW_ID;
+  const selectedColumnKeys = useMemo(
+    () => columnsForView(activeView, view.columnsByView),
+    [activeView, view.columnsByView],
+  );
+  const viewTypes = useMemo(
+    () => (activeView.types ? new Set(activeView.types) : null),
+    [activeView],
+  );
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -278,13 +292,47 @@ export default function Home() {
     setView((v) => ({ ...v, categoryFilters }));
   }, []);
 
-  const handleColumnToggle = useCallback((key: string) => {
+  const handleColumnToggle = useCallback(
+    (key: string) => {
+      setView((v) => {
+        const current = columnsForView(activeView, v.columnsByView);
+        const next = current.includes(key)
+          ? current.filter((k) => k !== key)
+          : [...current, key];
+        return { ...v, columnsByView: { ...v.columnsByView, [activeView.id]: next } };
+      });
+    },
+    [activeView],
+  );
+
+  /** Forget this view's column choice, falling back to its defaults. */
+  const handleColumnReset = useCallback(() => {
+    setView((v) => {
+      const next = { ...v.columnsByView };
+      delete next[activeView.id];
+      return { ...v, columnsByView: next };
+    });
+  }, [activeView]);
+
+  const handleClearFilters = useCallback(() => {
     setView((v) => ({
       ...v,
-      columnKeys: v.columnKeys.includes(key)
-        ? v.columnKeys.filter((k) => k !== key)
-        : [...v.columnKeys, key],
+      search: '',
+      categoryFilters: [],
+      operationFilter: null,
+      hiddenTypes: [],
     }));
+  }, []);
+
+  const handleViewChange = useCallback((id: string) => {
+    setView((v) => ({ ...v, view: id }));
+    setSelectedItem(null);
+  }, []);
+
+  /** Open a list view scoped to something clicked on the overview. */
+  const handleDrillDown = useCallback((viewId: string, query: string) => {
+    setView((v) => ({ ...v, view: viewId, search: query, operationFilter: null }));
+    setSelectedItem(null);
   }, []);
 
   const handleFilterByOperation = useCallback((opId: string) => {
@@ -305,12 +353,10 @@ export default function Home() {
     [view.categoryFilters],
   );
 
-  const filteredItems = useMemo(() => {
+  // Items matching the search and filters but not scoped to a telemetry type —
+  // the overview summarises across types, so it starts from this set.
+  const scopedItems = useMemo(() => {
     let result = items;
-
-    if (hiddenTypes.size > 0) {
-      result = result.filter((i) => !hiddenTypes.has(i.type));
-    }
 
     if (view.operationFilter) {
       result = result.filter((i) => i.envelope.tags?.['ai.operation.id'] === view.operationFilter);
@@ -328,11 +374,23 @@ export default function Home() {
       result = result.filter((i) => matchesQuery(i, query));
     }
 
+    return result;
+  }, [items, query, categoryMatchers, view.operationFilter]);
+
+  const filteredItems = useMemo(() => {
+    let result = scopedItems;
+
+    if (viewTypes) {
+      result = result.filter((i) => viewTypes.has(i.type));
+    } else if (hiddenTypes.size > 0) {
+      result = result.filter((i) => !hiddenTypes.has(i.type));
+    }
+
     return result.slice().sort((a, b) => {
       if (a.timestamp !== b.timestamp) return a.timestamp < b.timestamp ? 1 : -1;
       return b.id - a.id;
     });
-  }, [items, hiddenTypes, query, categoryMatchers, view.operationFilter]);
+  }, [scopedItems, hiddenTypes, viewTypes]);
 
   const availableCategories = useMemo(() => {
     const leafCats = new Set<string>();
@@ -359,10 +417,28 @@ export default function Home() {
     return counts;
   }, [items]);
 
-  const extraColumns = useMemo(
-    () => columns.filter((c) => view.columnKeys.includes(c.key)),
-    [columns, view.columnKeys],
-  );
+  // Order follows the view's column list, not discovery order, so the defaults
+  // read the way they were written.
+  const filtersActive =
+    view.search.trim().length > 0 ||
+    view.categoryFilters.length > 0 ||
+    view.operationFilter !== null ||
+    view.hiddenTypes.length > 0;
+
+  const scopeLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (view.search.trim()) parts.push(`matches of “${view.search.trim()}”`);
+    if (view.categoryFilters.length) parts.push(`${view.categoryFilters.length} category filter(s)`);
+    if (view.operationFilter) parts.push('one operation');
+    return parts.length ? parts.join(' and ') : null;
+  }, [view.search, view.categoryFilters, view.operationFilter]);
+
+  const extraColumns = useMemo(() => {
+    const byKey = new Map(columns.map((c) => [c.key, c]));
+    return selectedColumnKeys
+      .map((key) => byKey.get(key))
+      .filter((c): c is ColumnDef => c !== undefined);
+  }, [columns, selectedColumnKeys]);
 
   // Index newly arrived items while the browser is idle, so the first search of a
   // session does not stall on the whole buffer at once.
@@ -488,6 +564,13 @@ export default function Home() {
         </button>
       </div>
 
+      <ViewTabs
+        activeId={activeView.id}
+        onSelect={handleViewChange}
+        typeCounts={typeCounts}
+        totalCount={items.length}
+      />
+
       <FilterBar
         searchInputRef={searchInputRef}
         hiddenTypes={hiddenTypes}
@@ -518,10 +601,23 @@ export default function Home() {
         }}
         typeCounts={typeCounts}
         availableColumns={columns}
-        selectedColumnKeys={view.columnKeys}
+        selectedColumnKeys={selectedColumnKeys}
         onColumnToggle={handleColumnToggle}
+        onColumnReset={handleColumnReset}
+        columnsAreDefault={view.columnsByView[activeView.id] === undefined}
+        // The view already scopes the types, so its own filter would only confuse.
+        showTypeFilter={activeView.types === null}
+        showColumnPicker={!showingInsights}
+        itemNoun={showingInsights ? 'item' : undefined}
       />
 
+      {showingInsights ? (
+        <InsightsPanel
+          items={scopedItems}
+          onDrillDown={handleDrillDown}
+          scopeLabel={scopeLabel}
+        />
+      ) : (
       <div ref={paneRef} className="flex-1 flex min-h-0">
         <div
           className="flex flex-col min-h-0"
@@ -536,6 +632,9 @@ export default function Home() {
             onCopyConnectionString={handleCopyConnectionString}
             copied={copied}
             connectionString={connectionString}
+            hasCapturedItems={items.length > 0}
+            filtersActive={filtersActive}
+            onClearFilters={handleClearFilters}
           />
         </div>
 
@@ -553,6 +652,7 @@ export default function Home() {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

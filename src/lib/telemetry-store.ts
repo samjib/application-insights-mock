@@ -25,6 +25,8 @@ const BD_FIELDS = [
   'data',
   'message',
   'severityLevel',
+  'problemId',
+  'source',
 ] as const;
 
 export interface Batch {

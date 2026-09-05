@@ -415,7 +415,8 @@ network access to `fonts.googleapis.com`.
 The app already correlates by `ai.operation.id` and can filter to one operation.
 Rendering a request with its dependencies and traces as a timeline is the single
 feature that would make this meaningfully better than reading raw JSON, and most
-of the data plumbing already exists.
+of the data plumbing already exists. The Overview page is the natural place to
+reach it from — an operation row there already knows which request to open.
 
 ### 9.2 Smaller wins — S3
 
@@ -429,6 +430,22 @@ of the data plumbing already exists.
 ---
 
 ## Already done
+
+### Views and the overview
+
+| | Was |
+|:--|:--|
+| One generic feed | Eight views — Overview, Live feed, Requests, Dependencies, Exceptions, Traces, Events, Page views — each scoping the telemetry types and carrying columns suited to them |
+| One global column selection | Columns are remembered per view, with the view's own defaults until you choose otherwise and a "reset to defaults" in the picker |
+| No aggregate view | An Overview page: KPI tiles (items, requests and failure rate, request p95, dependencies, exceptions, traces at warning or above) and four drill-down tables — requests by operation, dependencies by target, exceptions by problem, log categories by severity — each row opening the matching view scoped to it |
+| Type filter competed with the view | Hidden in a typed view, where it could only contradict the view; still available on the live feed |
+| "No telemetry yet" whenever the list was empty | Distinguishes an empty buffer from a filtered-out one, and offers to clear the filters |
+| `problemId` and `source` were not discoverable as columns | Both are now offered by column discovery |
+
+The overview recomputes every aggregate on each batch. Measured over 8,000 items
+while streaming: frame p95 17.6 ms, **zero long tasks** — one pass over the items
+plus a sort of the (far smaller) group lists.
+
 
 ### Search and filtering
 
