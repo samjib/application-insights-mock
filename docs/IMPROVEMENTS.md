@@ -431,11 +431,35 @@ reach it from — an operation row there already knows which request to open.
 
 ## Already done
 
+### Charts on the overview
+
+| | |
+|:--|:--|
+| Telemetry over time | Stacked columns by type across a shared time axis, with a legend and a per-bucket tooltip listing every series |
+| Request outcomes over time | Stacked columns by response-code class, using the reserved status roles — the chart that shows *when* it started failing |
+| Request latency | Histogram over log-ish buckets, sequential single-hue ramp |
+| Stat tiles | Each carries a sparkline of its own metric over the same axis |
+| Table rows | Requests-by-operation and dependencies-by-target carry a per-row volume sparkline; log categories carry a severity mix bar beside the numbers |
+
+Colours were validated rather than chosen: `src/lib/chart-theme.ts` records the
+run. Tailwind's own ramps cannot pass — its `-400` steps sit above the lightness
+band, and darkening yellow enough to enter the band drops red↔yellow to ΔE 5.2
+under deuteranopia. The palette used is the app's hue families stepped for a dark
+surface, and the stacking order is load-bearing: yellow beside red fails the
+normal-vision floor, so exceptions sit on top of the stack instead.
+
+Every bucket is keyboard-reachable and carries the same readout on focus as on
+hover, and every value in a chart is also in a table, so nothing is gated behind
+a pointer.
+
+Measured on the overview with 19 charts live, recomputing on each 120 ms batch
+at ~9,000 items: frame p95 19.8 ms, zero long tasks.
+
 ### Views and the overview
 
 | | Was |
 |:--|:--|
-| One generic feed | Eight views — Overview, Live feed, Requests, Dependencies, Exceptions, Traces, Events, Page views — each scoping the telemetry types and carrying columns suited to them |
+| One generic feed | Seven views — Overview, Live feed, Requests, Dependencies, Exceptions, Traces, Events — each scoping the telemetry types and carrying columns suited to them |
 | One global column selection | Columns are remembered per view, with the view's own defaults until you choose otherwise and a "reset to defaults" in the picker |
 | No aggregate view | An Overview page: KPI tiles (items, requests and failure rate, request p95, dependencies, exceptions, traces at warning or above) and four drill-down tables — requests by operation, dependencies by target, exceptions by problem, log categories by severity — each row opening the matching view scoped to it |
 | Type filter competed with the view | Hidden in a typed view, where it could only contradict the view; still available on the live feed |

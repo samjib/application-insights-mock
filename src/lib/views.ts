@@ -73,13 +73,6 @@ export const VIEWS: TelemetryView[] = [
     defaultColumns: ['baseData.name'],
     description: 'Custom events',
   },
-  {
-    id: 'pageviews',
-    label: 'Page views',
-    types: ['PageView', 'PageViewPerf'],
-    defaultColumns: ['baseData.url', 'baseData.duration'],
-    description: 'Browser SDK page views',
-  },
 ];
 
 export const DEFAULT_VIEW_ID = 'all';
